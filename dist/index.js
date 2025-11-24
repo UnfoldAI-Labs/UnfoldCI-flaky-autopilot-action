@@ -345,14 +345,11 @@ async function parseJUnitXML(filePath) {
 
 "use strict";
 
-/**
- * PR Commenting - Notify users of flaky tests
- */
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.commentOnPR = commentOnPR;
 async function commentOnPR(options) {
     const { octokit, owner, repo, prNumber, flakesDetected, apiUrl } = options;
-    const dashboardUrl = apiUrl.replace('http://localhost:3000', 'https://app.flakyautopilot.dev');
+    const dashboardUrl = apiUrl.replace('https://app.unfoldci.com', 'http://localhost:3000');
     const comment = `## 🤖 Flaky Test Autopilot
 
 **Found ${flakesDetected} flaky test${flakesDetected > 1 ? 's' : ''}** in this PR
@@ -386,12 +383,6 @@ Flaky tests detected will be analyzed and fixed automatically. Check your repo f
 
 "use strict";
 
-/**
- * Dependency Hash Calculator
- *
- * Creates a hash of test file + all its direct dependencies
- * This prevents false positives when implementation code changes
- */
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     var desc = Object.getOwnPropertyDescriptor(m, k);
@@ -432,33 +423,12 @@ const fs = __importStar(__nccwpck_require__(9896));
 const path = __importStar(__nccwpck_require__(6928));
 const hash_1 = __nccwpck_require__(839);
 const import_parser_1 = __nccwpck_require__(1580);
-/**
- * Calculate combined hash of test file + its dependencies
- *
- * Algorithm:
- * 1. Read test file content
- * 2. Parse imports to find direct dependencies
- * 3. Read each dependency file (with extension variants)
- * 4. Concatenate all content: test + dep1 + dep2 + ...
- * 5. Hash the combined content
- *
- * This ensures hash changes when:
- * - Test code changes ✅
- * - Any imported file changes ✅
- *
- * Hash stays same when:
- * - Unrelated implementation code changes ✅
- * - Tests that don't import the changed code ✅
- */
 async function calculateDependencyHash(testFilePath) {
     try {
-        // Step 1: Read test file
         const testContent = fs.readFileSync(testFilePath, 'utf-8');
-        // Step 2: Parse imports
         const importPaths = (0, import_parser_1.parseImports)(testContent, testFilePath);
         console.log(`    📦 Test: ${path.basename(testFilePath)}`);
         console.log(`    🔗 Found ${importPaths.length} local import(s)`);
-        // Step 3: Read dependency files
         const dependencyContents = [];
         for (const importPath of importPaths) {
             const content = await readDependencyFile(importPath, testFilePath);
@@ -467,36 +437,23 @@ async function calculateDependencyHash(testFilePath) {
                 console.log(`       ✅ ${path.basename(importPath)}`);
             }
             else {
-                // Use placeholder for missing files to maintain deterministic hash
-                // This ensures hash stays consistent if file isn't found in CI environment
                 dependencyContents.push(`// MISSING: ${importPath}`);
                 console.log(`       ⚠️  ${path.basename(importPath)} (not found locally - using placeholder)`);
             }
         }
-        // Step 4: Combine all content (test + dependencies)
         const combinedContent = testContent + '\n' + dependencyContents.join('\n');
-        // Step 5: Hash combined content
         const hash = (0, hash_1.calculateContentHash)(combinedContent);
         console.log(`    🔐 Combined hash: ${hash.substring(0, 12)}...`);
         return hash;
     }
     catch (error) {
         console.warn(`⚠️  Failed to calculate dependency hash for ${testFilePath}:`, error.message);
-        // Fallback to simple file hash
         const content = fs.readFileSync(testFilePath, 'utf-8');
         return (0, hash_1.calculateContentHash)(content);
     }
 }
-/**
- * Read dependency file with multiple extension attempts
- *
- * For JS/TS: tries .ts, .tsx, .js, .jsx
- * For Python: tries .py
- * For others: tries the direct path
- */
 async function readDependencyFile(importPath, testFilePath) {
     const language = (0, import_parser_1.detectLanguage)(testFilePath);
-    // Determine which extensions to try based on language
     let extensions = [];
     if (language === 'javascript' || language === 'typescript') {
         extensions = ['.ts', '.tsx', '.js', '.jsx'];
@@ -528,7 +485,6 @@ async function readDependencyFile(importPath, testFilePath) {
     else if (language === 'swift') {
         extensions = ['.swift'];
     }
-    // If path already has extension, try it directly first
     if (path.extname(importPath)) {
         try {
             return fs.readFileSync(importPath, 'utf-8');
@@ -537,21 +493,17 @@ async function readDependencyFile(importPath, testFilePath) {
             return null;
         }
     }
-    // Try each extension
     for (const ext of extensions) {
         try {
             const fullPath = importPath + ext;
             return fs.readFileSync(fullPath, 'utf-8');
         }
         catch {
-            // Try next extension
+            continue;
         }
     }
     return null;
 }
-/**
- * Get list of dependencies for a test file (for debugging)
- */
 function getDependencies(testFilePath) {
     try {
         const content = fs.readFileSync(testFilePath, 'utf-8');
@@ -570,12 +522,6 @@ function getDependencies(testFilePath) {
 
 "use strict";
 
-/**
- * Calculate file content hash to detect code changes
- *
- * CRITICAL: Only aggregate test results if code hasn't changed!
- * Different code = different test = don't mix results
- */
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     var desc = Object.getOwnPropertyDescriptor(m, k);
@@ -614,24 +560,15 @@ exports.calculateFileHash = calculateFileHash;
 exports.calculateContentHash = calculateContentHash;
 const crypto = __importStar(__nccwpck_require__(6982));
 const fs = __importStar(__nccwpck_require__(9896));
-/**
- * Calculate SHA-256 hash of file content
- * Used to detect if test code changed between runs
- */
 async function calculateFileHash(filePath) {
     try {
         const content = fs.readFileSync(filePath, 'utf-8');
         return crypto.createHash('sha256').update(content).digest('hex');
     }
     catch {
-        // File not found locally (might be in container)
-        // Return placeholder - API will fetch from GitHub
         return 'unknown';
     }
 }
-/**
- * Calculate hash from file content (for GitHub API fetched content)
- */
 function calculateContentHash(content) {
     return crypto.createHash('sha256').update(content).digest('hex');
 }
@@ -644,12 +581,6 @@ function calculateContentHash(content) {
 
 "use strict";
 
-/**
- * Import Parser - Extract dependencies from test files
- *
- * Simplified version of backend parser for use in GitHub Actions
- * Supports: JS/TS, Python, Java, Go, Ruby, C#, PHP, Rust, Kotlin, Swift
- */
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     var desc = Object.getOwnPropertyDescriptor(m, k);
@@ -687,9 +618,6 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.detectLanguage = detectLanguage;
 exports.parseImports = parseImports;
 const path = __importStar(__nccwpck_require__(6928));
-/**
- * Detect programming language from file extension
- */
 function detectLanguage(filePath) {
     const ext = path.extname(filePath).toLowerCase();
     const languageMap = {
@@ -709,10 +637,6 @@ function detectLanguage(filePath) {
     };
     return languageMap[ext] || 'unknown';
 }
-/**
- * Parse imports from source code
- * Returns array of relative import paths
- */
 function parseImports(code, filePath) {
     const language = detectLanguage(filePath);
     switch (language) {
@@ -742,9 +666,6 @@ function parseImports(code, filePath) {
             return [];
     }
 }
-// ============================================
-// JAVASCRIPT/TYPESCRIPT
-// ============================================
 function parseJSImports(code, currentFilePath) {
     const imports = [];
     // ES6 imports: import X from './file'
@@ -780,9 +701,6 @@ function resolveJSPath(importPath, currentFilePath) {
         return null;
     }
 }
-// ============================================
-// PYTHON
-// ============================================
 function parsePythonImports(code, currentFilePath) {
     const imports = [];
     // from X import Y
@@ -828,9 +746,6 @@ function isPythonStdLib(module) {
     const baseName = module.split('.')[0];
     return stdLibs.includes(baseName);
 }
-// ============================================
-// JAVA
-// ============================================
 function parseJavaImports(code) {
     const imports = [];
     // import com.example.Utils;
@@ -846,9 +761,6 @@ function parseJavaImports(code) {
     }
     return imports;
 }
-// ============================================
-// GO
-// ============================================
 function parseGoImports(code) {
     const imports = [];
     // import "github.com/user/repo/package"
@@ -875,9 +787,6 @@ function parseGoImports(code) {
     }
     return imports;
 }
-// ============================================
-// RUBY
-// ============================================
 function parseRubyImports(code) {
     const imports = [];
     // require './file' or require_relative './file'
@@ -891,9 +800,6 @@ function parseRubyImports(code) {
     }
     return imports;
 }
-// ============================================
-// C#
-// ============================================
 function parseCSharpImports(code) {
     const imports = [];
     // using MyNamespace.MyClass;
@@ -908,9 +814,6 @@ function parseCSharpImports(code) {
     }
     return imports;
 }
-// ============================================
-// PHP
-// ============================================
 function parsePHPImports(code) {
     const imports = [];
     // require './file.php' or include './file.php'
@@ -930,9 +833,6 @@ function parsePHPImports(code) {
     }
     return imports;
 }
-// ============================================
-// RUST
-// ============================================
 function parseRustImports(code) {
     const imports = [];
     // use crate::module::submodule;
@@ -949,9 +849,6 @@ function parseRustImports(code) {
     }
     return imports;
 }
-// ============================================
-// KOTLIN
-// ============================================
 function parseKotlinImports(code) {
     const imports = [];
     // import com.example.Utils
@@ -966,9 +863,6 @@ function parseKotlinImports(code) {
     }
     return imports;
 }
-// ============================================
-// SWIFT
-// ============================================
 function parseSwiftImports(code) {
     const imports = [];
     // import MyModule

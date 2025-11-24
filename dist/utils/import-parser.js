@@ -1,10 +1,4 @@
 "use strict";
-/**
- * Import Parser - Extract dependencies from test files
- *
- * Simplified version of backend parser for use in GitHub Actions
- * Supports: JS/TS, Python, Java, Go, Ruby, C#, PHP, Rust, Kotlin, Swift
- */
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     var desc = Object.getOwnPropertyDescriptor(m, k);
@@ -42,9 +36,6 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.detectLanguage = detectLanguage;
 exports.parseImports = parseImports;
 const path = __importStar(require("path"));
-/**
- * Detect programming language from file extension
- */
 function detectLanguage(filePath) {
     const ext = path.extname(filePath).toLowerCase();
     const languageMap = {
@@ -64,10 +55,6 @@ function detectLanguage(filePath) {
     };
     return languageMap[ext] || 'unknown';
 }
-/**
- * Parse imports from source code
- * Returns array of relative import paths
- */
 function parseImports(code, filePath) {
     const language = detectLanguage(filePath);
     switch (language) {
@@ -97,9 +84,6 @@ function parseImports(code, filePath) {
             return [];
     }
 }
-// ============================================
-// JAVASCRIPT/TYPESCRIPT
-// ============================================
 function parseJSImports(code, currentFilePath) {
     const imports = [];
     // ES6 imports: import X from './file'
@@ -135,9 +119,6 @@ function resolveJSPath(importPath, currentFilePath) {
         return null;
     }
 }
-// ============================================
-// PYTHON
-// ============================================
 function parsePythonImports(code, currentFilePath) {
     const imports = [];
     // from X import Y
@@ -183,9 +164,6 @@ function isPythonStdLib(module) {
     const baseName = module.split('.')[0];
     return stdLibs.includes(baseName);
 }
-// ============================================
-// JAVA
-// ============================================
 function parseJavaImports(code) {
     const imports = [];
     // import com.example.Utils;
@@ -201,9 +179,6 @@ function parseJavaImports(code) {
     }
     return imports;
 }
-// ============================================
-// GO
-// ============================================
 function parseGoImports(code) {
     const imports = [];
     // import "github.com/user/repo/package"
@@ -230,9 +205,6 @@ function parseGoImports(code) {
     }
     return imports;
 }
-// ============================================
-// RUBY
-// ============================================
 function parseRubyImports(code) {
     const imports = [];
     // require './file' or require_relative './file'
@@ -246,9 +218,6 @@ function parseRubyImports(code) {
     }
     return imports;
 }
-// ============================================
-// C#
-// ============================================
 function parseCSharpImports(code) {
     const imports = [];
     // using MyNamespace.MyClass;
@@ -263,9 +232,6 @@ function parseCSharpImports(code) {
     }
     return imports;
 }
-// ============================================
-// PHP
-// ============================================
 function parsePHPImports(code) {
     const imports = [];
     // require './file.php' or include './file.php'
@@ -285,9 +251,6 @@ function parsePHPImports(code) {
     }
     return imports;
 }
-// ============================================
-// RUST
-// ============================================
 function parseRustImports(code) {
     const imports = [];
     // use crate::module::submodule;
@@ -304,9 +267,6 @@ function parseRustImports(code) {
     }
     return imports;
 }
-// ============================================
-// KOTLIN
-// ============================================
 function parseKotlinImports(code) {
     const imports = [];
     // import com.example.Utils
@@ -321,9 +281,6 @@ function parseKotlinImports(code) {
     }
     return imports;
 }
-// ============================================
-// SWIFT
-// ============================================
 function parseSwiftImports(code) {
     const imports = [];
     // import MyModule

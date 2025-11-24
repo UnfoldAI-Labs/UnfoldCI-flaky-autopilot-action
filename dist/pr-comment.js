@@ -1,12 +1,9 @@
 "use strict";
-/**
- * PR Commenting - Notify users of flaky tests
- */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.commentOnPR = commentOnPR;
 async function commentOnPR(options) {
     const { octokit, owner, repo, prNumber, flakesDetected, apiUrl } = options;
-    const dashboardUrl = apiUrl.replace('http://localhost:3000', 'https://app.flakyautopilot.dev');
+    const dashboardUrl = apiUrl.replace('https://app.unfoldci.com', 'http://localhost:3000');
     const comment = `## 🤖 Flaky Test Autopilot
 
 **Found ${flakesDetected} flaky test${flakesDetected > 1 ? 's' : ''}** in this PR
