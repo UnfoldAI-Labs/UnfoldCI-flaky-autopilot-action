@@ -1,0 +1,52 @@
+name: 'UnfoldCI Flaky Test Autopilot'
+description: 'Automatically detect and fix flaky tests with AI'
+author: 'UnfoldAI Labs'
+
+branding:
+  icon: 'zap'
+  color: 'purple'
+
+inputs:
+  api-url:
+    description: 'UnfoldCI Flaky Test Autopilot API URL'
+    required: false
+    default: 'https://2ese0yds4a.execute-api.us-east-1.amazonaws.com'
+  
+  api-key:
+    description: 'UnfoldCI Flaky Test Autopilot API key (optional for MVP)'
+    required: false
+  
+  results-path:
+    description: 'Glob pattern for test result files (JUnit XML, JSON) for UnfoldCI Flaky Test Autopilot'
+    required: false
+    default: '**/test-results/**/*.xml'
+  
+  enable-historical-backfill:
+    description: 'Fetch past CI runs on first execution (instant analysis!) for UnfoldCI Flaky Test Autopilot'
+    required: false
+    default: 'true'
+  
+  max-historical-runs:
+    description: 'Number of past runs to fetch for backfill for UnfoldCI Flaky Test Autopilot'
+    required: false
+    default: '50'
+  
+  comment-on-pr:
+    description: 'Comment on PR if flaky tests found for UnfoldCI Flaky Test Autopilot'
+    required: false
+    default: 'true'
+
+outputs:
+  flakes_detected:
+    description: 'Number of flaky tests detected in this run'
+  tests_analyzed:
+    description: 'Total number of tests analyzed'
+  dashboard_url:
+    description: 'URL to UnfoldCI dashboard with detailed analysis and metrics'
+  status:
+    description: 'Action status: success, rate_limited, or api_error'
+
+runs:
+  using: 'node20'
+  main: 'dist/index.js'
+
