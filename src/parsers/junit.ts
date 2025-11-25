@@ -68,24 +68,38 @@ export async function parseJUnitXML(filePath: string): Promise<TestResult[]> {
       }
 
       if (!file.match(/\.(js|ts|jsx|tsx|py|java|go|rb|php|rs|kt|swift)$/)) {
+        // Handle pytest format: tests.python-deps.test_with_imports → tests/python-deps/test_with_imports.py
         if (file.startsWith('tests.')) {
           const parts = file.split('.');
-          if (parts.length >= 3) {
-            file = `${parts[0]}/${parts[1]}.py`;
+          if (parts.length >= 2) {
+            // Convert dots to slashes for directory structure
+            file = parts.join('/') + '.py';
           }
         }
-        else if (file.includes('.') && (file.startsWith('test_') || file.match(/^[A-Z]est/))) {
+        // Handle Ruby/RSpec format: spec.models.user_spec → spec/models/user_spec.rb
+        else if (file.startsWith('spec.')) {
           const parts = file.split('.');
           if (parts.length >= 2) {
-            file = `tests/${parts[0]}.py`;
+            file = parts.join('/') + '.rb';
           }
         }
+        // Handle Java format: com.example.TestClass → com/example/TestClass.java
+        else if (file.includes('.') && file.match(/^[a-z]+\.[a-z]/)) {
+          file = file.replace(/\./g, '/') + '.java';
+        }
+        // Handle Go format: package.TestFunction → package/test.go
+        else if (file.includes('.') && file.match(/^[a-z]+\.(Test|Benchmark)/)) {
+          const parts = file.split('.');
+          file = `${parts[0]}/test.go`;
+        }
+        // Handle single-word test files: test_something → tests/test_something.py
+        else if (file.startsWith('test_') && !file.includes('.')) {
+          file = `tests/${file}.py`;
+        }
+        // Generic fallback: use suite name if available
         else if (testsuite.$.name && !file.includes('.')) {
           const suiteName = testsuite.$.name.toLowerCase().replace(/\s+/g, '-');
           file = `tests/${suiteName}.test.js`;
-        }
-        else if (file.includes('.') && !file.includes('/') && !file.startsWith('test')) {
-          file = file.replace(/\./g, '/') + '.java';
         }
       }
 
