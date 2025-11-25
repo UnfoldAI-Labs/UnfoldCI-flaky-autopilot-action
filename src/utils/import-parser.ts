@@ -17,6 +17,14 @@ export function detectLanguage(filePath: string): string {
     '.rs': 'rust',
     '.kt': 'kotlin',
     '.swift': 'swift',
+    '.c': 'c',
+    '.cpp': 'cpp',
+    '.cc': 'cpp',
+    '.cxx': 'cpp',
+    '.h': 'c',
+    '.hpp': 'cpp',
+    '.hh': 'cpp',
+    '.hxx': 'cpp',
   };
 
   return languageMap[ext] || 'unknown';
@@ -56,6 +64,10 @@ export function parseImports(code: string, filePath: string): string[] {
 
     case 'swift':
       return parseSwiftImports(code);
+
+    case 'c':
+    case 'cpp':
+      return parseCImports(code, filePath);
 
     default:
       console.warn(`⚠️  Language not supported for import parsing: ${language}`);
@@ -310,6 +322,24 @@ function parseSwiftImports(code: string): string[] {
     if (!systemModules.includes(module)) {
       imports.push(module + '.swift');
     }
+  }
+
+  return imports;
+}
+
+function parseCImports(code: string, currentFilePath: string): string[] {
+  const imports: string[] = [];
+
+  // #include "local_file.h" or #include "local_file.hpp"
+  const localIncludeRegex = /#include\s+"([^"]+)"/g;
+  let match;
+  while ((match = localIncludeRegex.exec(code)) !== null) {
+    const includePath = match[1];
+    // Only local includes (with quotes, not angle brackets)
+    const currentDir = path.dirname(currentFilePath);
+    let resolved = path.join(currentDir, includePath);
+    resolved = resolved.replace(/\\/g, '/');
+    imports.push(resolved);
   }
 
   return imports;

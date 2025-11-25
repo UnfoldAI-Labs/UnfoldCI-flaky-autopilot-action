@@ -62,7 +62,7 @@ async function parseJUnitXML(filePath) {
             let file = attrs.file || 'unknown';
             if (file === 'unknown' && testsuite.$.name) {
                 const suiteName = testsuite.$.name;
-                if (suiteName.match(/\.(js|ts|jsx|tsx|py|java|go|rb|php|rs|kt|swift)$/)) {
+                if (suiteName.match(/\.(js|ts|jsx|tsx|py|java|go|rb|php|rs|kt|swift|c|cpp|cc|cxx|h|hpp)$/)) {
                     file = suiteName.replace(/\\/g, '/');
                 }
                 else {
@@ -75,7 +75,7 @@ async function parseJUnitXML(filePath) {
             if ((hasFailure || hasError) && !file.includes('/') && !file.includes('\\')) {
                 const errorText = hasFailure ? testcase.failure[0]._ || testcase.failure[0] : testcase.error[0]._ || testcase.error[0];
                 if (typeof errorText === 'string') {
-                    const fileMatch = errorText.match(/\(([^)]+\.(test|spec)\.(js|ts|jsx|tsx|py|java|go|rb|php|rs|kt|swift)):\d+:\d+\)/);
+                    const fileMatch = errorText.match(/\(([^)]+\.(test|spec)\.(js|ts|jsx|tsx|py|java|go|rb|php|rs|kt|swift|c|cpp|cc|cxx|h|hpp)):\d+:\d+\)/);
                     if (fileMatch) {
                         let extractedPath = fileMatch[1].replace(/\\/g, '/');
                         extractedPath = extractedPath.replace(/^[A-Z]:[\/\\].*?([^\/\\]+\/(test|spec)s?\/)/i, '$1');
@@ -84,7 +84,7 @@ async function parseJUnitXML(filePath) {
                     }
                 }
             }
-            if (!file.match(/\.(js|ts|jsx|tsx|py|java|go|rb|php|rs|kt|swift)$/)) {
+            if (!file.match(/\.(js|ts|jsx|tsx|py|java|go|rb|php|rs|kt|swift|c|cpp|cc|cxx|h|hpp)$/)) {
                 // Handle pytest format: tests.python-deps.test_with_imports → tests/python-deps/test_with_imports.py
                 if (file.startsWith('tests.')) {
                     const parts = file.split('.');
