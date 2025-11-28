@@ -99,6 +99,7 @@ async function run() {
         repoUrl: `https://github.com/${context.repo.owner}/${context.repo.repo}`,
         commitSha: context.sha,
         testResults: allTests,
+        triggeredBy: context.actor, // GitHub username who triggered the workflow
       }) as APIResponse;
 
       console.log(`✅ API Response:`, response);

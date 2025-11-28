@@ -6,6 +6,7 @@ interface SendResultsOptions {
   repoUrl: string;
   commitSha: string;
   testResults: TestResult[];
+  triggeredBy?: string; // GitHub username who triggered the CI
 }
 
 interface APIResponse {
@@ -22,7 +23,7 @@ interface APIResponse {
 }
 
 export async function sendTestResults(options: SendResultsOptions): Promise<APIResponse> {
-  const { apiUrl, apiKey, repoUrl, commitSha, testResults } = options;
+  const { apiUrl, apiKey, repoUrl, commitSha, testResults, triggeredBy } = options;
 
   console.log(`📤 Sending ${testResults.length} test results to API...`);
 
@@ -37,6 +38,7 @@ export async function sendTestResults(options: SendResultsOptions): Promise<APIR
       commit_sha: commitSha,
       test_results: testResults,
       source: 'github_action',
+      triggered_by: triggeredBy, // GitHub username who triggered the CI
     }),
   });
 
