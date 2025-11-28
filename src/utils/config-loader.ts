@@ -70,7 +70,7 @@ export class ConfigLoader {
     // Try to load TypeScript config
     const tsConfig = this.loadTsConfig(projectRoot);
     if (tsConfig) {
-      Object.assign(config.aliases, this.extractTsConfigAliases(tsConfig, projectRoot));
+      config.aliases = { ...config.aliases, ...this.extractTsConfigAliases(tsConfig, projectRoot) };
       if (tsConfig.baseUrl) {
         config.baseUrl = tsConfig.baseUrl;
       }
@@ -80,7 +80,7 @@ export class ConfigLoader {
     if (!tsConfig) {
       const jsConfig = this.loadJsConfig(projectRoot);
       if (jsConfig) {
-        Object.assign(config.aliases, this.extractTsConfigAliases(jsConfig, projectRoot));
+        config.aliases = { ...config.aliases, ...this.extractTsConfigAliases(jsConfig, projectRoot) };
         if (jsConfig.baseUrl) {
           config.baseUrl = jsConfig.baseUrl;
         }

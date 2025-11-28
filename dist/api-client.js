@@ -2,7 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.sendTestResults = sendTestResults;
 async function sendTestResults(options) {
-    const { apiUrl, apiKey, repoUrl, commitSha, testResults } = options;
+    const { apiUrl, apiKey, repoUrl, commitSha, testResults, triggeredBy } = options;
     console.log(`📤 Sending ${testResults.length} test results to API...`);
     const response = await fetch(`${apiUrl}/api/webhooks/github`, {
         method: 'POST',
@@ -15,6 +15,7 @@ async function sendTestResults(options) {
             commit_sha: commitSha,
             test_results: testResults,
             source: 'github_action',
+            triggered_by: triggeredBy, // GitHub username who triggered the CI
         }),
     });
     if (!response.ok) {
