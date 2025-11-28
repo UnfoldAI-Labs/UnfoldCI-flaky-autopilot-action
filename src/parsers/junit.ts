@@ -1,6 +1,16 @@
 /**
  * JUnit XML Parser
  * Extracts test results from JUnit XML format (Jest, Vitest, pytest, JUnit, etc.)
+ * 
+ * Supports:
+ * - Jest/Vitest (JavaScript/TypeScript)
+ * - pytest/unittest/nose (Python)
+ * - JUnit/TestNG (Java)
+ * - PHPUnit (PHP)
+ * - RSpec/Minitest (Ruby)
+ * - Go testing
+ * - Rust cargo test
+ * - NUnit/xUnit (C#)
  */
 
 import { parseStringPromise } from 'xml2js';
@@ -12,7 +22,250 @@ export interface TestResult {
   outcome: 'passed' | 'failed';
   duration_ms: number;
   error_message?: string;
-  code_hash?: string; // Will be added later to track code changes
+  code_hash?: string;
+}
+
+// Common test framework suite names that don't represent actual files
+const GENERIC_SUITE_NAMES = new Set([
+  'pytest', 'unittest', 'nose', 'nose2', 'py.test',
+  'jest', 'vitest', 'mocha', 'jasmine', 'karma',
+  'junit', 'testng', 'maven-surefire-plugin',
+  'phpunit', 'codeception',
+  'rspec', 'minitest',
+  'go', 'testing',
+  'cargo', 'rust',
+  'nunit', 'xunit', 'mstest',
+  'googletest', 'gtest', 'catch2'
+]);
+
+// File extensions for different languages
+const FILE_EXTENSIONS: Record<string, string> = {
+  py: '.py',
+  python: '.py',
+  js: '.js',
+  javascript: '.js',
+  ts: '.ts',
+  typescript: '.ts',
+  jsx: '.jsx',
+  tsx: '.tsx',
+  java: '.java',
+  kt: '.kt',
+  kotlin: '.kt',
+  php: '.php',
+  rb: '.rb',
+  ruby: '.rb',
+  go: '.go',
+  golang: '.go',
+  rs: '.rs',
+  rust: '.rs',
+  cs: '.cs',
+  csharp: '.cs',
+  cpp: '.cpp',
+  c: '.c',
+  swift: '.swift',
+};
+
+/**
+ * Detect the likely language/framework from various hints
+ */
+function detectLanguage(suiteName: string, classname: string, filePath: string): string | null {
+  const combined = `${suiteName} ${classname} ${filePath}`.toLowerCase();
+  
+  // Python indicators
+  if (combined.includes('pytest') || combined.includes('unittest') || 
+      combined.includes('nose') || classname.includes('test_') ||
+      combined.match(/tests?\.[a-z_]+\.[A-Z]/) || // tests.module.TestClass
+      combined.match(/^test_[a-z]/)) {
+    return 'py';
+  }
+  
+  // JavaScript/TypeScript indicators  
+  if (combined.includes('jest') || combined.includes('vitest') || 
+      combined.includes('mocha') || combined.includes('.test.') ||
+      combined.includes('.spec.') || combined.match(/\.(js|ts|jsx|tsx)$/)) {
+    return combined.includes('tsx') ? 'tsx' : combined.includes('ts') ? 'ts' : 'js';
+  }
+  
+  // Java indicators
+  if (combined.match(/^com\.|^org\.|^net\./) || combined.includes('junit') ||
+      combined.includes('testng') || combined.includes('maven')) {
+    return 'java';
+  }
+  
+  // PHP indicators
+  if (combined.includes('phpunit') || combined.includes('\\tests\\') ||
+      classname.includes('\\') || combined.match(/test\.php$/)) {
+    return 'php';
+  }
+  
+  // Ruby indicators
+  if (combined.includes('rspec') || combined.includes('minitest') ||
+      combined.includes('_spec') || combined.match(/spec\./)) {
+    return 'rb';
+  }
+  
+  // Go indicators
+  if (combined.match(/_test$/) || combined.includes('go test') ||
+      suiteName.match(/^[a-z]+$/) && classname.match(/^Test[A-Z]/)) {
+    return 'go';
+  }
+  
+  // Rust indicators
+  if (combined.includes('cargo') || classname.includes('::')) {
+    return 'rs';
+  }
+  
+  // C# indicators
+  if (combined.includes('nunit') || combined.includes('xunit') || 
+      combined.includes('mstest') || classname.match(/^[A-Z][a-zA-Z]+\.[A-Z]/)) {
+    return 'cs';
+  }
+  
+  return null;
+}
+
+/**
+ * Convert a Python module path to a file path
+ * Examples:
+ * - tests.test_async.TestClass → tests/test_async.py
+ * - my_package.tests.test_file.TestClass → my_package/tests/test_file.py
+ * - test_something → tests/test_something.py
+ */
+function pythonModuleToPath(modulePath: string): string {
+  const parts = modulePath.split('.');
+  
+  // Filter out class names (PascalCase) and keep module/directory names
+  const pathParts: string[] = [];
+  for (const part of parts) {
+    // Skip if it looks like a class name (starts with capital, no underscores at start)
+    if (part.match(/^[A-Z][a-zA-Z0-9]*$/) && !part.startsWith('Test_')) {
+      continue;
+    }
+    // Skip if it's a test method name
+    if (part.startsWith('test_') && pathParts.length > 0 && pathParts[pathParts.length - 1].startsWith('test_')) {
+      continue;
+    }
+    pathParts.push(part);
+  }
+  
+  if (pathParts.length === 0) {
+    return modulePath.replace(/\./g, '/') + '.py';
+  }
+  
+  // If we just have a test_* name without directory, add tests/
+  if (pathParts.length === 1 && pathParts[0].startsWith('test_')) {
+    return `tests/${pathParts[0]}.py`;
+  }
+  
+  return pathParts.join('/') + '.py';
+}
+
+/**
+ * Convert a PHP namespace to a file path
+ * Example: App\Tests\Unit\SomeTest → tests/Unit/SomeTest.php
+ */
+function phpNamespaceToPath(namespace: string): string {
+  let path = namespace.replace(/\\/g, '/');
+  
+  // Remove common namespace prefixes
+  path = path.replace(/^(App|Src|Lib)\//i, '');
+  
+  // Ensure tests directory
+  if (!path.toLowerCase().startsWith('tests/')) {
+    if (path.toLowerCase().includes('/tests/')) {
+      path = path.substring(path.toLowerCase().indexOf('/tests/') + 1);
+    } else {
+      path = 'tests/' + path;
+    }
+  }
+  
+  return path + '.php';
+}
+
+/**
+ * Convert a Java package to a file path
+ * Example: com.example.tests.UserTest → src/test/java/com/example/tests/UserTest.java
+ */
+function javaPackageToPath(packagePath: string): string {
+  const path = packagePath.replace(/\./g, '/');
+  
+  // Check if it's likely a test file
+  if (path.toLowerCase().includes('test')) {
+    return `src/test/java/${path}.java`;
+  }
+  return `${path}.java`;
+}
+
+/**
+ * Convert a Rust module path to a file path
+ * Example: my_crate::tests::test_module → tests/test_module.rs or src/tests.rs
+ */
+function rustModuleToPath(modulePath: string): string {
+  const parts = modulePath.split('::');
+  
+  // Filter out test function names
+  const pathParts = parts.filter(p => !p.startsWith('test_') || p.includes('test_'));
+  
+  if (pathParts.length === 1) {
+    return `src/${pathParts[0]}.rs`;
+  }
+  
+  // If it contains 'tests', use tests directory
+  if (pathParts.includes('tests')) {
+    const testIdx = pathParts.indexOf('tests');
+    return pathParts.slice(testIdx).join('/') + '.rs';
+  }
+  
+  return 'src/' + pathParts.join('/') + '.rs';
+}
+
+/**
+ * Convert a C# namespace to a file path
+ * Example: MyProject.Tests.Unit.UserTests → Tests/Unit/UserTests.cs
+ */
+function csharpNamespaceToPath(namespace: string): string {
+  const parts = namespace.split('.');
+  
+  // Find where 'Tests' starts
+  const testIdx = parts.findIndex(p => p.toLowerCase().includes('test'));
+  if (testIdx >= 0) {
+    return parts.slice(testIdx).join('/') + '.cs';
+  }
+  
+  return parts.join('/') + '.cs';
+}
+
+/**
+ * Try to extract file path from error message
+ */
+function extractFileFromError(errorText: string): string | null {
+  if (!errorText || typeof errorText !== 'string') return null;
+  
+  // Common patterns for file paths in error messages
+  const patterns = [
+    // Jest/Node: (path/to/file.test.js:10:5)
+    /\(([^)]+\.(test|spec)\.(js|ts|jsx|tsx|mjs|cjs)):\d+:\d+\)/,
+    // Python: File "path/to/file.py", line 10
+    /File "([^"]+\.py)", line \d+/,
+    // Java: at com.example.Test(Test.java:10)
+    /at [^(]+\(([^)]+\.java):\d+\)/,
+    // Generic: path/to/file.ext:line:col
+    /([a-zA-Z0-9_\-./\\]+\.(py|js|ts|jsx|tsx|java|rb|php|go|rs|cs|cpp|c|swift)):\d+/,
+    // Windows paths
+    /([A-Z]:\\[^:]+\.(py|js|ts|jsx|tsx|java|rb|php|go|rs|cs|cpp|c|swift)):\d+/i,
+  ];
+  
+  for (const pattern of patterns) {
+    const match = errorText.match(pattern);
+    if (match) {
+      let path = match[1].replace(/\\/g, '/');
+      // Remove absolute path prefix, keep from tests/ or src/
+      path = path.replace(/^.*?([a-zA-Z0-9_-]+\/(tests?|specs?|src)\/)/, '$1');
+      return path;
+    }
+  }
+  
+  return null;
 }
 
 export async function parseJUnitXML(filePath: string): Promise<TestResult[]> {
@@ -21,98 +274,130 @@ export async function parseJUnitXML(filePath: string): Promise<TestResult[]> {
   
   const results: TestResult[] = [];
   
-  // JUnit XML structure: <testsuites><testsuite><testcase>
-  const testsuites = parsed.testsuites?.testsuite || [parsed.testsuite];
+  // Handle both <testsuites><testsuite> and direct <testsuite>
+  let testsuites = parsed.testsuites?.testsuite || [];
+  if (parsed.testsuite) {
+    testsuites = Array.isArray(parsed.testsuite) ? parsed.testsuite : [parsed.testsuite];
+  }
+  if (!Array.isArray(testsuites)) {
+    testsuites = [testsuites];
+  }
   
   for (const testsuite of testsuites) {
-    if (!testsuite.testcase) continue;
+    if (!testsuite || !testsuite.testcase) continue;
     
     const testcases = Array.isArray(testsuite.testcase) ? testsuite.testcase : [testsuite.testcase];
+    const suiteName = testsuite.$?.name || '';
     
     for (const testcase of testcases) {
+      if (!testcase || !testcase.$) continue;
+      
       const attrs = testcase.$;
+      const classname = attrs.classname || '';
       
       // Determine outcome
-      const hasFailure = testcase.failure && testcase.failure.length > 0;  // Changed: hasfailure → hasFailure
+      const hasFailure = testcase.failure && testcase.failure.length > 0;
       const hasError = testcase.error && testcase.error.length > 0;
       const wasSkipped = testcase.skipped && testcase.skipped.length > 0;
       
       if (wasSkipped) continue;
-
+      
       const outcome = (hasFailure || hasError) ? 'failed' : 'passed';
-
-      let file = attrs.file || 'unknown';
-
-      if (file === 'unknown' && testsuite.$.name) {
-        const suiteName = testsuite.$.name;
-        if (suiteName.match(/\.(js|ts|jsx|tsx|py|java|go|rb|php|rs|kt|swift|c|cpp|cc|cxx|h|hpp)$/)) {
+      
+      // Start with explicit file attribute if present
+      let file = attrs.file || '';
+      
+      // Normalize Windows paths
+      if (file) {
+        file = file.replace(/\\/g, '/');
+      }
+      
+      // If no file, try to determine from other attributes
+      if (!file || file === 'unknown') {
+        // Detect language to help with conversion
+        const lang = detectLanguage(suiteName, classname, file);
+        
+        // Try suite name first if it looks like a file path
+        if (suiteName.match(/\.(js|ts|jsx|tsx|py|java|rb|php|go|rs|cs|cpp|c|swift)$/i)) {
           file = suiteName.replace(/\\/g, '/');
-        } else {
-          file = attrs.classname || suiteName;
         }
-      } else if (file === 'unknown') {
-        file = attrs.classname || testsuite.$.name || 'unknown';
-      }
-
-      if ((hasFailure || hasError) && !file.includes('/') && !file.includes('\\')) {
-        const errorText = hasFailure ? testcase.failure[0]._ || testcase.failure[0] : testcase.error[0]._ || testcase.error[0];
-        if (typeof errorText === 'string') {
-          const fileMatch = errorText.match(/\(([^)]+\.(test|spec)\.(js|ts|jsx|tsx|py|java|go|rb|php|rs|kt|swift|c|cpp|cc|cxx|h|hpp)):\d+:\d+\)/);
-          if (fileMatch) {
-            let extractedPath = fileMatch[1].replace(/\\/g, '/');
-            extractedPath = extractedPath.replace(/^[A-Z]:[\/\\].*?([^\/\\]+\/(test|spec)s?\/)/i, '$1');
-            extractedPath = extractedPath.replace(/^\/.*?([^\/]+\/(test|spec)s?\/)/i, '$1');
-            file = extractedPath;
+        // Try classname if suite name is generic
+        else if (GENERIC_SUITE_NAMES.has(suiteName.toLowerCase()) || !suiteName) {
+          file = classname;
+        }
+        // Use classname if it has dots (likely a module path)
+        else if (classname && classname.includes('.')) {
+          file = classname;
+        }
+        // Fall back to suite name
+        else {
+          file = suiteName || classname || 'unknown';
+        }
+        
+        // Now convert module paths to file paths based on language
+        if (file && !file.match(/\.(js|ts|jsx|tsx|py|java|rb|php|go|rs|cs|cpp|c|swift)$/i)) {
+          if (lang === 'py' || file.match(/^tests?\.|test_|_test$/)) {
+            file = pythonModuleToPath(file);
+          } else if (lang === 'php' || file.includes('\\')) {
+            file = phpNamespaceToPath(file);
+          } else if (lang === 'java' || file.match(/^(com|org|net)\./)) {
+            file = javaPackageToPath(file);
+          } else if (lang === 'rb' || file.match(/^spec\.|_spec$/)) {
+            file = file.replace(/\./g, '/') + '.rb';
+          } else if (lang === 'go') {
+            file = file.replace(/\./g, '/') + '_test.go';
+          } else if (lang === 'rs' || file.includes('::')) {
+            file = rustModuleToPath(file);
+          } else if (lang === 'cs') {
+            file = csharpNamespaceToPath(file);
+          } else if (file.includes('.')) {
+            // Generic dot-separated path - try to infer
+            if (file.match(/Test|Spec/i)) {
+              // Likely a test class, keep as-is with .js fallback
+              file = file.replace(/\./g, '/') + '.js';
+            }
           }
         }
       }
-
-      if (!file.match(/\.(js|ts|jsx|tsx|py|java|go|rb|php|rs|kt|swift|c|cpp|cc|cxx|h|hpp)$/)) {
-        // Handle pytest format: tests.python-deps.test_with_imports → tests/python-deps/test_with_imports.py
-        if (file.startsWith('tests.')) {
-          const parts = file.split('.');
-          if (parts.length >= 2) {
-            // Convert dots to slashes for directory structure
-            file = parts.join('/') + '.py';
-          }
-        }
-        // Handle Ruby/RSpec format: spec.models.user_spec → spec/models/user_spec.rb
-        else if (file.startsWith('spec.')) {
-          const parts = file.split('.');
-          if (parts.length >= 2) {
-            file = parts.join('/') + '.rb';
-          }
-        }
-        // Handle Java format: com.example.TestClass → com/example/TestClass.java
-        else if (file.includes('.') && file.match(/^[a-z]+\.[a-z]/)) {
-          file = file.replace(/\./g, '/') + '.java';
-        }
-        // Handle Go format: package.TestFunction → package/test.go
-        else if (file.includes('.') && file.match(/^[a-z]+\.(Test|Benchmark)/)) {
-          const parts = file.split('.');
-          file = `${parts[0]}/test.go`;
-        }
-        // Handle single-word test files: test_something → tests/test_something.py
-        else if (file.startsWith('test_') && !file.includes('.')) {
-          file = `tests/${file}.py`;
-        }
-        // Generic fallback: use suite name if available
-        else if (testsuite.$.name && !file.includes('.')) {
-          const suiteName = testsuite.$.name.toLowerCase().replace(/\s+/g, '-');
-          file = `tests/${suiteName}.test.js`;
+      
+      // Try to extract file path from error message if we still don't have a good path
+      if ((!file || file === 'unknown' || !file.includes('/')) && (hasFailure || hasError)) {
+        const errorText = hasFailure 
+          ? (testcase.failure[0]?._ || testcase.failure[0] || '')
+          : (testcase.error[0]?._ || testcase.error[0] || '');
+        
+        const extractedFile = extractFileFromError(errorText);
+        if (extractedFile) {
+          file = extractedFile;
         }
       }
-
+      
+      // Final fallback - create a reasonable path
+      if (!file || file === 'unknown') {
+        const testName = attrs.name || 'unknown';
+        const sanitized = testName.toLowerCase().replace(/[^a-z0-9_-]/g, '_').substring(0, 50);
+        file = `tests/${sanitized}.test.js`;
+      }
+      
+      // Clean up the file path
+      file = file
+        .replace(/\\/g, '/')
+        .replace(/\/+/g, '/')
+        .replace(/^\//, '');
+      
       results.push({
-        name: attrs.name,
+        name: attrs.name || 'unknown',
         file: file,
         outcome: outcome,
         duration_ms: parseFloat(attrs.time || '0') * 1000,
-        error_message: hasFailure ? testcase.failure[0]._ : hasError ? testcase.error[0]._ : undefined,
+        error_message: hasFailure 
+          ? (testcase.failure[0]?._ || String(testcase.failure[0] || ''))
+          : hasError 
+            ? (testcase.error[0]?._ || String(testcase.error[0] || ''))
+            : undefined,
       });
     }
   }
   
   return results;
 }
-
