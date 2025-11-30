@@ -6,6 +6,7 @@ import { sendTestResults } from './api-client';
 import { calculateFileHash } from './utils/hash';
 import { calculateDependencyHash } from './utils/dependency-hash';
 import { commentOnPR } from './pr-comment';
+import { reportError, ErrorTypes } from './error-reporter';
 
 // Add this interface at the top
 interface APIResponse {
@@ -22,19 +23,29 @@ interface APIResponse {
 }
 
 async function run() {
+  // Store these for error reporting
+  let apiUrl = 'https://api.unfoldci.com';
+  let apiKey: string | undefined;
+  let resultsPath = '**/test-results/**/*.xml';
+  
   try {
     console.log('🚀 Flaky Test Autopilot - Starting');
     
     // Get inputs
-    const apiUrl = core.getInput('api-url') || 'http://localhost:3000';
-    const apiKey = core.getInput('api-key');
-    const resultsPath = core.getInput('results-path') || '**/test-results/**/*.xml';
+    apiUrl = core.getInput('api-url') || 'https://api.unfoldci.com';
+    apiKey = core.getInput('api-key');
+    resultsPath = core.getInput('results-path') || '**/test-results/**/*.xml';
     const commentEnabled = core.getInput('comment-on-pr') === 'true';
     
     const context = github.context;
     const token = process.env.GITHUB_TOKEN;
     
     if (!token) {
+      await reportError(apiUrl, apiKey, {
+        error_type: ErrorTypes.MISSING_TOKEN,
+        error_message: 'GITHUB_TOKEN environment variable not found',
+        results_path: resultsPath,
+      });
       throw new Error('GITHUB_TOKEN not found');
     }
     
@@ -52,6 +63,16 @@ async function run() {
     
     if (resultFiles.length === 0) {
       console.log('⚠️  No test result files found');
+      await reportError(apiUrl, apiKey, {
+        error_type: ErrorTypes.XML_NOT_FOUND,
+        error_message: `No test result files found matching pattern: ${resultsPath}`,
+        results_path: resultsPath,
+        files_found: 0,
+        metadata: {
+          search_pattern: resultsPath,
+          cwd: process.cwd(),
+        },
+      });
       core.setOutput('flakes_detected', 0);
       core.setOutput('tests_analyzed', 0);
       return;
@@ -62,6 +83,7 @@ async function run() {
     // Parse all test results
     const allTests: any[] = [];
     
+    let parseErrors: string[] = [];
     for (const file of resultFiles) {
       try {
         console.log(`  Parsing: ${file}`);
@@ -76,7 +98,22 @@ async function run() {
         allTests.push(...tests);
       } catch (error: any) {
         console.warn(`  ⚠️  Failed to parse ${file}:`, error.message);
+        parseErrors.push(`${file}: ${error.message}`);
       }
+    }
+    
+    // Report parsing errors if any
+    if (parseErrors.length > 0) {
+      await reportError(apiUrl, apiKey, {
+        error_type: ErrorTypes.XML_PARSE_ERROR,
+        error_message: `Failed to parse ${parseErrors.length} file(s)`,
+        results_path: resultsPath,
+        files_found: resultFiles.length,
+        metadata: {
+          parse_errors: parseErrors,
+          successful_parses: allTests.length,
+        },
+      });
     }
     
     console.log(`✅ Parsed ${allTests.length} test(s)`);
@@ -120,6 +157,17 @@ async function run() {
           // Ignore parsing errors
         }
 
+        // Report rate limit (useful for understanding usage patterns)
+        await reportError(apiUrl, apiKey, {
+          error_type: ErrorTypes.API_RATE_LIMIT,
+          error_message: 'Usage limit exceeded',
+          results_path: resultsPath,
+          files_found: resultFiles.length,
+          metadata: {
+            tests_count: allTests.length,
+          },
+        });
+
         console.warn('ℹ️  Your CI pipeline will continue normally');
         console.warn('ℹ️  Visit your dashboard to manage your plan');
 
@@ -130,6 +178,20 @@ async function run() {
 
         return;
       }
+
+      // Report API errors
+      await reportError(apiUrl, apiKey, {
+        error_type: ErrorTypes.API_ERROR,
+        error_message: error.message,
+        error_stack: error.stack,
+        results_path: resultsPath,
+        files_found: resultFiles.length,
+        metadata: {
+          tests_count: allTests.length,
+          status_code: error.status || error.response?.status,
+          response_body: error.responseBody || error.response?.data,
+        },
+      });
 
       console.warn('⚠️  Failed to send results to API:', error.message);
       console.warn('ℹ️  Your CI pipeline will continue normally');
@@ -171,6 +233,15 @@ async function run() {
   } catch (error: any) {
     console.error('❌ Action failed:', error.message);
     console.error(error.stack);
+    
+    // Report unexpected errors
+    await reportError(apiUrl, apiKey, {
+      error_type: ErrorTypes.UNKNOWN_ERROR,
+      error_message: error.message,
+      error_stack: error.stack,
+      results_path: resultsPath,
+    });
+    
     core.setFailed(error.message);
   }
 }
