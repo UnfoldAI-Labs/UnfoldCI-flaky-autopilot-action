@@ -27,6 +27,16 @@ export async function sendTestResults(options: SendResultsOptions): Promise<APIR
 
   console.log(`📤 Sending ${testResults.length} test results to API...`);
 
+  // ✅ DEBUG: Log outcome distribution to help diagnose "all passed" bug
+  const passedCount = testResults.filter(t => t.outcome === 'passed').length;
+  const failedCount = testResults.filter(t => t.outcome === 'failed').length;
+  console.log(`📊 Test Results Summary:`);
+  console.log(`   ✅ Passed: ${passedCount}`);
+  console.log(`   ❌ Failed: ${failedCount}`);
+  if (failedCount > 0) {
+    console.log(`   Failed tests: ${testResults.filter(t => t.outcome === 'failed').map(t => t.name).join(', ')}`);
+  }
+
   const response = await fetch(`${apiUrl}/api/webhooks/github`, {
     method: 'POST',
     headers: {
