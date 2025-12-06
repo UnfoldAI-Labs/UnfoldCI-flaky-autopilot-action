@@ -324,6 +324,18 @@ async function run() {
             });
             console.log(`✅ API Response:`, response);
             console.log(`   Flaky tests detected: ${response.flakes_detected || 0}`);
+            // Show usage warning if limits exceeded (data was still saved)
+            if (response.usage_limit_exceeded) {
+                console.log('');
+                console.log('📊 Usage Limit Notice:');
+                console.log('   ✅ Test data has been saved to your dashboard');
+                console.log('   ⏸️  AI analysis is paused (usage limit reached)');
+                console.log('   💡 Your tests are still being tracked for flakiness detection');
+                if (response.upgrade_message) {
+                    console.log(`   ℹ️  ${response.upgrade_message}`);
+                }
+                console.log('');
+            }
         }
         catch (error) {
             if (error.status === 429) {
