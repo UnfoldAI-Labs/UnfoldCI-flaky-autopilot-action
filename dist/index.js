@@ -921,8 +921,17 @@ async function calculateDependencyHash(testFilePath) {
     }
     catch (error) {
         console.warn(`⚠️  Failed to calculate dependency hash for ${testFilePath}:`, error.message);
-        const content = fs.readFileSync(testFilePath, 'utf-8');
-        return (0, hash_1.calculateContentHash)(content);
+        // If we can't read the file (doesn't exist locally), just hash the path
+        // This is fine - we'll still track outcomes, just can't detect code changes
+        try {
+            const content = fs.readFileSync(testFilePath, 'utf-8');
+            return (0, hash_1.calculateContentHash)(content);
+        }
+        catch {
+            // File doesn't exist locally - use path-based hash as fallback
+            console.warn(`   📁 File not found locally, using path-based hash`);
+            return (0, hash_1.calculateContentHash)(`PATH:${testFilePath}`);
+        }
     }
 }
 async function readDependencyFile(importPath, testFilePath) {
