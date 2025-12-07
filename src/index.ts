@@ -54,8 +54,28 @@ async function run() {
     
     const octokit = github.getOctokit(token);
     
+    // Extract branch name - GITHUB_HEAD_REF is most reliable for PRs
+    // For push events, extract from refs/heads/branch-name
+    // For PR events, context.ref = refs/pull/123/merge which is NOT the branch name
+    const branch = process.env.GITHUB_HEAD_REF  // PR source branch (set by GitHub Actions)
+      || (context.ref?.startsWith('refs/heads/') ? context.ref.replace('refs/heads/', '') : '')
+      || context.payload?.pull_request?.head?.ref 
+      || '';
+    
     console.log(`📊 Repo: ${context.repo.owner}/${context.repo.repo}`);
     console.log(`📝 Commit: ${context.sha}`);
+    console.log(`📌 Branch: ${branch || 'unknown'}`);
+    
+    // ✅ Early exit for fix branches - no need to send data to API
+    // This saves API calls and prevents any possibility of polluting test stats
+    if (branch.startsWith('flaky-autopilot/fix-')) {
+      console.log(`⏭️  Skipping - this is a fix branch: ${branch}`);
+      console.log(`   Fix PR branches should not affect original test statistics`);
+      core.setOutput('status', 'skipped_fix_branch');
+      core.setOutput('flakes_detected', 0);
+      core.setOutput('tests_analyzed', 0);
+      return;
+    }
     
     // Find test result files
     console.log(`🔍 Finding test results: ${resultsPath}`);
@@ -140,6 +160,7 @@ async function run() {
         commitSha: context.sha,
         testResults: allTests,
         triggeredBy: context.actor, // GitHub username who triggered the workflow
+        branch: branch, // Used to filter out fix PR branches
       }) as APIResponse;
 
       console.log(`✅ API Response:`, response);
