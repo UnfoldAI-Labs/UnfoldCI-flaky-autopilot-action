@@ -2,8 +2,11 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.sendTestResults = sendTestResults;
 async function sendTestResults(options) {
-    const { apiUrl, apiKey, repoUrl, commitSha, testResults, triggeredBy } = options;
+    const { apiUrl, apiKey, repoUrl, commitSha, testResults, triggeredBy, branch } = options;
     console.log(`📤 Sending ${testResults.length} test results to API...`);
+    if (branch) {
+        console.log(`📌 Branch: ${branch}`);
+    }
     // ✅ DEBUG: Log outcome distribution to help diagnose "all passed" bug
     const passedCount = testResults.filter(t => t.outcome === 'passed').length;
     const failedCount = testResults.filter(t => t.outcome === 'failed').length;
@@ -25,6 +28,7 @@ async function sendTestResults(options) {
             test_results: testResults,
             source: 'github_action',
             triggered_by: triggeredBy, // GitHub username who triggered the CI
+            branch: branch, // Branch name (used to filter out fix PR branches)
         }),
     });
     if (!response.ok) {
