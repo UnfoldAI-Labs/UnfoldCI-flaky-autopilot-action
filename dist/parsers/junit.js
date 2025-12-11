@@ -282,13 +282,23 @@ async function parseJUnitXML(filePath) {
                 continue;
             const attrs = testcase.$;
             const classname = attrs.classname || '';
-            // Determine outcome
+            // Determine outcome - distinguish between failed, error, skipped, and passed
             const hasFailure = testcase.failure && testcase.failure.length > 0;
             const hasError = testcase.error && testcase.error.length > 0;
             const wasSkipped = testcase.skipped && testcase.skipped.length > 0;
-            if (wasSkipped)
-                continue;
-            const outcome = (hasFailure || hasError) ? 'failed' : 'passed';
+            let outcome;
+            if (wasSkipped) {
+                outcome = 'skipped';
+            }
+            else if (hasError) {
+                outcome = 'error'; // Test threw an exception
+            }
+            else if (hasFailure) {
+                outcome = 'failed'; // Test assertion failed
+            }
+            else {
+                outcome = 'passed';
+            }
             // Start with explicit file attribute if present
             let file = attrs.file || '';
             // Normalize Windows paths

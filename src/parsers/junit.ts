@@ -19,7 +19,7 @@ import * as fs from 'fs';
 export interface TestResult {
   name: string;
   file: string;
-  outcome: 'passed' | 'failed';
+  outcome: 'passed' | 'failed' | 'error' | 'skipped';
   duration_ms: number;
   error_message?: string;
   code_hash?: string;
@@ -295,14 +295,21 @@ export async function parseJUnitXML(filePath: string): Promise<TestResult[]> {
       const attrs = testcase.$;
       const classname = attrs.classname || '';
       
-      // Determine outcome
+      // Determine outcome - distinguish between failed, error, skipped, and passed
       const hasFailure = testcase.failure && testcase.failure.length > 0;
       const hasError = testcase.error && testcase.error.length > 0;
       const wasSkipped = testcase.skipped && testcase.skipped.length > 0;
       
-      if (wasSkipped) continue;
-      
-      const outcome = (hasFailure || hasError) ? 'failed' : 'passed';
+      let outcome: 'passed' | 'failed' | 'error' | 'skipped';
+      if (wasSkipped) {
+        outcome = 'skipped';
+      } else if (hasError) {
+        outcome = 'error';  // Test threw an exception
+      } else if (hasFailure) {
+        outcome = 'failed'; // Test assertion failed
+      } else {
+        outcome = 'passed';
+      }
       
       // Start with explicit file attribute if present
       let file = attrs.file || '';

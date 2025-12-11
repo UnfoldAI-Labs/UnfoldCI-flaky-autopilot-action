@@ -240,6 +240,8 @@ async function run() {
         apiKey = core.getInput('api-key');
         resultsPath = core.getInput('results-path') || '**/test-results/**/*.xml';
         const commentEnabled = core.getInput('comment-on-pr') === 'true';
+        const failOnTestFailure = core.getInput('fail-on-test-failure') !== 'false'; // Default: true
+        const minTests = parseInt(core.getInput('min-tests') || '0', 10);
         const context = github.context;
         const token = process.env.GITHUB_TOKEN;
         if (!token) {
@@ -269,6 +271,10 @@ async function run() {
             core.setOutput('status', 'skipped_fix_branch');
             core.setOutput('flakes_detected', 0);
             core.setOutput('tests_analyzed', 0);
+            core.setOutput('tests_passed', 0);
+            core.setOutput('tests_failed', 0);
+            core.setOutput('tests_skipped', 0);
+            core.setOutput('dashboard_url', '');
             return;
         }
         // Find test result files
@@ -289,8 +295,19 @@ async function run() {
                     cwd: process.cwd(),
                 },
             });
+            core.setOutput('status', 'no_results');
             core.setOutput('flakes_detected', 0);
             core.setOutput('tests_analyzed', 0);
+            core.setOutput('tests_passed', 0);
+            core.setOutput('tests_failed', 0);
+            core.setOutput('tests_skipped', 0);
+            core.setOutput('dashboard_url', '');
+            // Check min-tests requirement
+            if (minTests > 0) {
+                const message = `Expected at least ${minTests} tests, but found 0 (no test result files). Test runner may have crashed.`;
+                console.log(`❌ ${message}`);
+                core.setFailed(message);
+            }
             return;
         }
         console.log(`📦 Found ${resultFiles.length} test result file(s)`);
@@ -329,10 +346,42 @@ async function run() {
         console.log(`✅ Parsed ${allTests.length} test(s)`);
         if (allTests.length === 0) {
             console.log('⚠️  No tests found in result files');
+            core.setOutput('status', 'no_tests');
             core.setOutput('flakes_detected', 0);
             core.setOutput('tests_analyzed', 0);
+            core.setOutput('tests_passed', 0);
+            core.setOutput('tests_failed', 0);
+            core.setOutput('tests_skipped', 0);
+            core.setOutput('dashboard_url', '');
+            // Check min-tests requirement
+            if (minTests > 0) {
+                const message = `Expected at least ${minTests} tests, but found 0 in result files. Test runner may have crashed.`;
+                console.log(`❌ ${message}`);
+                core.setFailed(message);
+            }
             return;
         }
+        // Check min-tests requirement
+        if (allTests.length < minTests) {
+            console.log(`⚠️  Found ${allTests.length} tests, but expected at least ${minTests}`);
+        }
+        // Count passed/failed/skipped tests
+        // Note: 'error' outcomes (exceptions) should also fail CI, just like 'failed'
+        const passedTests = allTests.filter(t => t.outcome === 'passed');
+        const failedTests = allTests.filter(t => t.outcome === 'failed' || t.outcome === 'error');
+        const skippedTests = allTests.filter(t => t.outcome === 'skipped');
+        console.log('');
+        console.log('📊 Test Results Summary:');
+        console.log(`   ✅ Passed: ${passedTests.length}`);
+        console.log(`   ❌ Failed: ${failedTests.length}`);
+        if (skippedTests.length > 0) {
+            console.log(`   ⏭️  Skipped: ${skippedTests.length}`);
+        }
+        if (failedTests.length > 0) {
+            const failedNames = failedTests.map(t => t.name).join(', ');
+            console.log(`   Failed tests: ${failedNames}`);
+        }
+        console.log('');
         console.log('📤 Sending results to Flaky Autopilot API...');
         let response = null;
         try {
@@ -388,9 +437,24 @@ async function run() {
                 console.warn('ℹ️  Your CI pipeline will continue normally');
                 console.warn('ℹ️  Visit your dashboard to manage your plan');
                 core.setOutput('flakes_detected', 0);
-                core.setOutput('tests_analyzed', 0);
+                core.setOutput('tests_analyzed', allTests.length);
+                core.setOutput('tests_passed', passedTests.length);
+                core.setOutput('tests_failed', failedTests.length);
+                core.setOutput('tests_skipped', skippedTests.length);
                 core.setOutput('dashboard_url', '');
                 core.setOutput('status', 'rate_limited');
+                // Still fail CI if tests failed (API issues shouldn't hide test failures)
+                if (failOnTestFailure && failedTests.length > 0) {
+                    const message = `${failedTests.length} test(s) failed or errored. See logs above for details.`;
+                    console.log('');
+                    console.log(`❌ ${message}`);
+                    core.setFailed(message);
+                }
+                else if (minTests > 0 && allTests.length < minTests) {
+                    const message = `Expected at least ${minTests} tests, but found ${allTests.length}. Test runner may have crashed.`;
+                    console.log(`❌ ${message}`);
+                    core.setFailed(message);
+                }
                 return;
             }
             // Report API errors
@@ -409,13 +473,31 @@ async function run() {
             console.warn('⚠️  Failed to send results to API:', error.message);
             console.warn('ℹ️  Your CI pipeline will continue normally');
             core.setOutput('flakes_detected', 0);
-            core.setOutput('tests_analyzed', 0);
+            core.setOutput('tests_analyzed', allTests.length);
+            core.setOutput('tests_passed', passedTests.length);
+            core.setOutput('tests_failed', failedTests.length);
+            core.setOutput('tests_skipped', skippedTests.length);
             core.setOutput('dashboard_url', '');
             core.setOutput('status', 'api_error');
+            // Still fail CI if tests failed (API issues shouldn't hide test failures)
+            if (failOnTestFailure && failedTests.length > 0) {
+                const message = `${failedTests.length} test(s) failed or errored. See logs above for details.`;
+                console.log('');
+                console.log(`❌ ${message}`);
+                core.setFailed(message);
+            }
+            else if (minTests > 0 && allTests.length < minTests) {
+                const message = `Expected at least ${minTests} tests, but found ${allTests.length}. Test runner may have crashed.`;
+                console.log(`❌ ${message}`);
+                core.setFailed(message);
+            }
             return;
         }
         core.setOutput('flakes_detected', response.flakes_detected || 0);
         core.setOutput('tests_analyzed', allTests.length);
+        core.setOutput('tests_passed', passedTests.length);
+        core.setOutput('tests_failed', failedTests.length);
+        core.setOutput('tests_skipped', skippedTests.length);
         core.setOutput('dashboard_url', response.dashboard_url || '');
         core.setOutput('status', 'success');
         if (commentEnabled && context.payload.pull_request && (response.flakes_detected ?? 0) > 0) {
@@ -436,6 +518,18 @@ async function run() {
             }
         }
         console.log('🎉 Flaky Test Autopilot - Complete!');
+        // Fail CI if tests failed and option is enabled
+        if (failOnTestFailure && failedTests.length > 0) {
+            const message = `${failedTests.length} test(s) failed or errored. See logs above for details.`;
+            console.log('');
+            console.log(`❌ ${message}`);
+            core.setFailed(message);
+        }
+        else if (minTests > 0 && allTests.length < minTests) {
+            const message = `Expected at least ${minTests} tests, but found ${allTests.length}. Test runner may have crashed.`;
+            console.log(`❌ ${message}`);
+            core.setFailed(message);
+        }
     }
     catch (error) {
         console.error('❌ Action failed:', error.message);
@@ -743,13 +837,23 @@ async function parseJUnitXML(filePath) {
                 continue;
             const attrs = testcase.$;
             const classname = attrs.classname || '';
-            // Determine outcome
+            // Determine outcome - distinguish between failed, error, skipped, and passed
             const hasFailure = testcase.failure && testcase.failure.length > 0;
             const hasError = testcase.error && testcase.error.length > 0;
             const wasSkipped = testcase.skipped && testcase.skipped.length > 0;
-            if (wasSkipped)
-                continue;
-            const outcome = (hasFailure || hasError) ? 'failed' : 'passed';
+            let outcome;
+            if (wasSkipped) {
+                outcome = 'skipped';
+            }
+            else if (hasError) {
+                outcome = 'error'; // Test threw an exception
+            }
+            else if (hasFailure) {
+                outcome = 'failed'; // Test assertion failed
+            }
+            else {
+                outcome = 'passed';
+            }
             // Start with explicit file attribute if present
             let file = attrs.file || '';
             // Normalize Windows paths
@@ -1236,7 +1340,7 @@ function parsePythonImports(code, currentFilePath) {
     let match;
     while ((match = fromRegex.exec(code)) !== null) {
         const module = match[1];
-        if (!isPythonStdLib(module) && module.startsWith('.')) {
+        if (!isPythonStdLib(module) && !isPythonExternalPackage(module)) {
             imports.push(module);
         }
     }
@@ -1244,35 +1348,90 @@ function parsePythonImports(code, currentFilePath) {
     const importRegex = /^import\s+([\w.]+)/gm;
     while ((match = importRegex.exec(code)) !== null) {
         const module = match[1];
-        if (!isPythonStdLib(module)) {
+        if (!isPythonStdLib(module) && !isPythonExternalPackage(module)) {
             imports.push(module);
         }
     }
-    return imports
-        .filter(imp => imp.startsWith('.')) // Only relative imports
-        .map(imp => pythonModuleToPath(imp, currentFilePath));
+    return imports.map(imp => pythonModuleToPath(imp, currentFilePath));
 }
 function pythonModuleToPath(module, currentFilePath) {
     if (module.startsWith('.')) {
-        // Relative import: ..utils.helpers
+        // Relative import: ..utils.helpers or .foo
         const levels = module.match(/^\.*/)[0].length;
         const rest = module.slice(levels);
         const currentDir = path.dirname(currentFilePath);
         const upDirs = '../'.repeat(levels - 1);
-        const modulePath = rest.replace(/\./g, '/');
-        return path.join(currentDir, upDirs, modulePath + '.py').replace(/\\/g, '/');
+        const modulePath = rest ? rest.replace(/\./g, '/') : '';
+        const result = path.join(currentDir, upDirs, modulePath + '.py').replace(/\\/g, '/');
+        return result;
     }
-    // Absolute import - convert to path
+    // Absolute import (e.g., src.core.base, tests.helpers, app.main)
+    // These are local project imports - convert to path
+    // e.g., "src.core.base" → "src/core/base.py"
     return module.replace(/\./g, '/') + '.py';
 }
 function isPythonStdLib(module) {
     const stdLibs = [
         'os', 'sys', 'json', 'time', 're', 'math', 'random', 'datetime',
         'collections', 'itertools', 'functools', 'pathlib', 'typing',
-        'unittest', 'pytest', 'asyncio', 'logging', 'csv', 'urllib'
+        'unittest', 'pytest', 'asyncio', 'logging', 'csv', 'urllib',
+        'io', 'string', 'struct', 'copy', 'pprint', 'enum', 'abc',
+        'contextlib', 'dataclasses', 'hashlib', 'hmac', 'secrets',
+        'threading', 'multiprocessing', 'subprocess', 'socket', 'ssl',
+        'http', 'email', 'html', 'xml', 'base64', 'binascii', 'pickle',
+        'sqlite3', 'zlib', 'gzip', 'bz2', 'lzma', 'zipfile', 'tarfile',
+        'tempfile', 'shutil', 'glob', 'fnmatch', 'linecache', 'traceback',
+        'warnings', 'inspect', 'dis', 'types', 'weakref', 'gc', 'atexit',
+        'argparse', 'getopt', 'configparser', 'fileinput', 'stat', 'platform',
+        'errno', 'ctypes', 'concurrent', 'queue', 'heapq', 'bisect', 'array',
+        'decimal', 'fractions', 'numbers', 'cmath', 'statistics', 'operator',
+        'textwrap', 'unicodedata', 'codecs', 'locale', 'gettext', 'calendar',
+        'uuid', 'ipaddress', 'select', 'selectors', 'signal', 'mmap', 'cProfile',
+        'pstats', 'timeit', 'trace', 'builtins', '__future__', 'keyword', 'token',
+        'tokenize', 'ast', 'symtable', 'compileall', 'pyclbr', 'py_compile',
+        'importlib', 'pkgutil', 'runpy', 'sysconfig', 'site', 'venv',
+        'doctest', 'pdb', 'faulthandler', 'unittest', 'mock', 'test'
     ];
     const baseName = module.split('.')[0];
     return stdLibs.includes(baseName);
+}
+function isPythonExternalPackage(module) {
+    // Common external packages that should be ignored
+    const externalPackages = [
+        // Testing
+        'pytest', 'nose', 'hypothesis', 'mock', 'faker', 'factory_boy',
+        // Web frameworks
+        'flask', 'django', 'fastapi', 'starlette', 'tornado', 'bottle', 'pyramid',
+        'aiohttp', 'sanic', 'quart', 'uvicorn', 'gunicorn', 'werkzeug',
+        // Data science
+        'numpy', 'pandas', 'scipy', 'matplotlib', 'seaborn', 'plotly',
+        'sklearn', 'tensorflow', 'torch', 'keras', 'xgboost', 'lightgbm',
+        // Database
+        'sqlalchemy', 'psycopg2', 'pymongo', 'redis', 'elasticsearch',
+        'motor', 'asyncpg', 'aiomysql', 'peewee', 'tortoise',
+        // HTTP/API
+        'requests', 'httpx', 'aiohttp', 'urllib3', 'httplib2', 'pycurl',
+        // AWS/Cloud
+        'boto3', 'botocore', 'azure', 'google', 'aws_cdk',
+        // Utilities
+        'pydantic', 'marshmallow', 'attrs', 'dataclasses_json', 'orjson',
+        'click', 'typer', 'rich', 'tqdm', 'colorama', 'termcolor',
+        'yaml', 'toml', 'dotenv', 'environs', 'decouple',
+        'celery', 'rq', 'dramatiq', 'huey',
+        'jwt', 'passlib', 'bcrypt', 'cryptography', 'paramiko',
+        'lxml', 'beautifulsoup4', 'bs4', 'scrapy', 'selenium',
+        'pillow', 'PIL', 'cv2', 'opencv',
+        'grpc', 'grpcio', 'protobuf', 'thrift',
+        'graphql', 'strawberry', 'ariadne',
+        'alembic', 'migrate',
+        'loguru', 'structlog',
+        'tenacity', 'backoff', 'retrying',
+        'freezegun', 'responses', 'httpretty', 'vcrpy',
+        'mypy', 'black', 'flake8', 'pylint', 'isort', 'autopep8',
+        'setuptools', 'wheel', 'pip', 'poetry', 'pipenv',
+    ];
+    const baseName = module.split('.')[0];
+    return externalPackages.includes(baseName);
 }
 function parseJavaImports(code) {
     const imports = [];

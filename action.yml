@@ -35,12 +35,28 @@ inputs:
     description: 'Comment on PR if flaky tests found for UnfoldCI Flaky Test Autopilot'
     required: false
     default: 'true'
+  
+  fail-on-test-failure:
+    description: 'Fail the CI if any tests failed or errored (reflects actual test status)'
+    required: false
+    default: 'true'
+  
+  min-tests:
+    description: 'Minimum expected tests (fails if fewer found - catches crashes)'
+    required: false
+    default: '0'
 
 outputs:
   flakes_detected:
     description: 'Number of flaky tests detected in this run'
   tests_analyzed:
     description: 'Total number of tests analyzed'
+  tests_passed:
+    description: 'Number of tests that passed'
+  tests_failed:
+    description: 'Number of tests that failed or errored'
+  tests_skipped:
+    description: 'Number of tests that were skipped'
   dashboard_url:
     description: 'URL to UnfoldCI dashboard with detailed analysis and metrics'
   status:

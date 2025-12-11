@@ -124,7 +124,7 @@ function parsePythonImports(code: string, currentFilePath: string): string[] {
   let match;
   while ((match = fromRegex.exec(code)) !== null) {
     const module = match[1];
-    if (!isPythonStdLib(module) && module.startsWith('.')) {
+    if (!isPythonStdLib(module) && !isPythonExternalPackage(module)) {
       imports.push(module);
     }
   }
@@ -133,28 +133,29 @@ function parsePythonImports(code: string, currentFilePath: string): string[] {
   const importRegex = /^import\s+([\w.]+)/gm;
   while ((match = importRegex.exec(code)) !== null) {
     const module = match[1];
-    if (!isPythonStdLib(module)) {
+    if (!isPythonStdLib(module) && !isPythonExternalPackage(module)) {
       imports.push(module);
     }
   }
 
-  return imports
-    .filter(imp => imp.startsWith('.')) // Only relative imports
-    .map(imp => pythonModuleToPath(imp, currentFilePath));
+  return imports.map(imp => pythonModuleToPath(imp, currentFilePath));
 }
 
 function pythonModuleToPath(module: string, currentFilePath: string): string {
   if (module.startsWith('.')) {
-    // Relative import: ..utils.helpers
+    // Relative import: ..utils.helpers or .foo
     const levels = module.match(/^\.*/)![0].length;
     const rest = module.slice(levels);
     const currentDir = path.dirname(currentFilePath);
     const upDirs = '../'.repeat(levels - 1);
-    const modulePath = rest.replace(/\./g, '/');
-    return path.join(currentDir, upDirs, modulePath + '.py').replace(/\\/g, '/');
+    const modulePath = rest ? rest.replace(/\./g, '/') : '';
+    const result = path.join(currentDir, upDirs, modulePath + '.py').replace(/\\/g, '/');
+    return result;
   }
 
-  // Absolute import - convert to path
+  // Absolute import (e.g., src.core.base, tests.helpers, app.main)
+  // These are local project imports - convert to path
+  // e.g., "src.core.base" → "src/core/base.py"
   return module.replace(/\./g, '/') + '.py';
 }
 
@@ -162,10 +163,65 @@ function isPythonStdLib(module: string): boolean {
   const stdLibs = [
     'os', 'sys', 'json', 'time', 're', 'math', 'random', 'datetime',
     'collections', 'itertools', 'functools', 'pathlib', 'typing',
-    'unittest', 'pytest', 'asyncio', 'logging', 'csv', 'urllib'
+    'unittest', 'pytest', 'asyncio', 'logging', 'csv', 'urllib',
+    'io', 'string', 'struct', 'copy', 'pprint', 'enum', 'abc',
+    'contextlib', 'dataclasses', 'hashlib', 'hmac', 'secrets',
+    'threading', 'multiprocessing', 'subprocess', 'socket', 'ssl',
+    'http', 'email', 'html', 'xml', 'base64', 'binascii', 'pickle',
+    'sqlite3', 'zlib', 'gzip', 'bz2', 'lzma', 'zipfile', 'tarfile',
+    'tempfile', 'shutil', 'glob', 'fnmatch', 'linecache', 'traceback',
+    'warnings', 'inspect', 'dis', 'types', 'weakref', 'gc', 'atexit',
+    'argparse', 'getopt', 'configparser', 'fileinput', 'stat', 'platform',
+    'errno', 'ctypes', 'concurrent', 'queue', 'heapq', 'bisect', 'array',
+    'decimal', 'fractions', 'numbers', 'cmath', 'statistics', 'operator',
+    'textwrap', 'unicodedata', 'codecs', 'locale', 'gettext', 'calendar',
+    'uuid', 'ipaddress', 'select', 'selectors', 'signal', 'mmap', 'cProfile',
+    'pstats', 'timeit', 'trace', 'builtins', '__future__', 'keyword', 'token',
+    'tokenize', 'ast', 'symtable', 'compileall', 'pyclbr', 'py_compile',
+    'importlib', 'pkgutil', 'runpy', 'sysconfig', 'site', 'venv',
+    'doctest', 'pdb', 'faulthandler', 'unittest', 'mock', 'test'
   ];
   const baseName = module.split('.')[0];
   return stdLibs.includes(baseName);
+}
+
+function isPythonExternalPackage(module: string): boolean {
+  // Common external packages that should be ignored
+  const externalPackages = [
+    // Testing
+    'pytest', 'nose', 'hypothesis', 'mock', 'faker', 'factory_boy',
+    // Web frameworks
+    'flask', 'django', 'fastapi', 'starlette', 'tornado', 'bottle', 'pyramid',
+    'aiohttp', 'sanic', 'quart', 'uvicorn', 'gunicorn', 'werkzeug',
+    // Data science
+    'numpy', 'pandas', 'scipy', 'matplotlib', 'seaborn', 'plotly',
+    'sklearn', 'tensorflow', 'torch', 'keras', 'xgboost', 'lightgbm',
+    // Database
+    'sqlalchemy', 'psycopg2', 'pymongo', 'redis', 'elasticsearch',
+    'motor', 'asyncpg', 'aiomysql', 'peewee', 'tortoise',
+    // HTTP/API
+    'requests', 'httpx', 'aiohttp', 'urllib3', 'httplib2', 'pycurl',
+    // AWS/Cloud
+    'boto3', 'botocore', 'azure', 'google', 'aws_cdk',
+    // Utilities
+    'pydantic', 'marshmallow', 'attrs', 'dataclasses_json', 'orjson',
+    'click', 'typer', 'rich', 'tqdm', 'colorama', 'termcolor',
+    'yaml', 'toml', 'dotenv', 'environs', 'decouple',
+    'celery', 'rq', 'dramatiq', 'huey',
+    'jwt', 'passlib', 'bcrypt', 'cryptography', 'paramiko',
+    'lxml', 'beautifulsoup4', 'bs4', 'scrapy', 'selenium',
+    'pillow', 'PIL', 'cv2', 'opencv',
+    'grpc', 'grpcio', 'protobuf', 'thrift',
+    'graphql', 'strawberry', 'ariadne',
+    'alembic', 'migrate',
+    'loguru', 'structlog',
+    'tenacity', 'backoff', 'retrying',
+    'freezegun', 'responses', 'httpretty', 'vcrpy',
+    'mypy', 'black', 'flake8', 'pylint', 'isort', 'autopep8',
+    'setuptools', 'wheel', 'pip', 'poetry', 'pipenv',
+  ];
+  const baseName = module.split('.')[0];
+  return externalPackages.includes(baseName);
 }
 
 function parseJavaImports(code: string): string[] {

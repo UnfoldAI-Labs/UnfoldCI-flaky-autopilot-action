@@ -39,6 +39,8 @@ async function run() {
     apiKey = core.getInput('api-key');
     resultsPath = core.getInput('results-path') || '**/test-results/**/*.xml';
     const commentEnabled = core.getInput('comment-on-pr') === 'true';
+    const failOnTestFailure = core.getInput('fail-on-test-failure') !== 'false'; // Default: true
+    const minTests = parseInt(core.getInput('min-tests') || '0', 10);
     
     const context = github.context;
     const token = process.env.GITHUB_TOKEN;
@@ -74,6 +76,10 @@ async function run() {
       core.setOutput('status', 'skipped_fix_branch');
       core.setOutput('flakes_detected', 0);
       core.setOutput('tests_analyzed', 0);
+      core.setOutput('tests_passed', 0);
+      core.setOutput('tests_failed', 0);
+      core.setOutput('tests_skipped', 0);
+      core.setOutput('dashboard_url', '');
       return;
     }
     
@@ -96,8 +102,20 @@ async function run() {
           cwd: process.cwd(),
         },
       });
+      core.setOutput('status', 'no_results');
       core.setOutput('flakes_detected', 0);
       core.setOutput('tests_analyzed', 0);
+      core.setOutput('tests_passed', 0);
+      core.setOutput('tests_failed', 0);
+      core.setOutput('tests_skipped', 0);
+      core.setOutput('dashboard_url', '');
+      
+      // Check min-tests requirement
+      if (minTests > 0) {
+        const message = `Expected at least ${minTests} tests, but found 0 (no test result files). Test runner may have crashed.`;
+        console.log(`❌ ${message}`);
+        core.setFailed(message);
+      }
       return;
     }
     
@@ -143,10 +161,47 @@ async function run() {
     
     if (allTests.length === 0) {
       console.log('⚠️  No tests found in result files');
+      core.setOutput('status', 'no_tests');
       core.setOutput('flakes_detected', 0);
       core.setOutput('tests_analyzed', 0);
+      core.setOutput('tests_passed', 0);
+      core.setOutput('tests_failed', 0);
+      core.setOutput('tests_skipped', 0);
+      core.setOutput('dashboard_url', '');
+      
+      // Check min-tests requirement
+      if (minTests > 0) {
+        const message = `Expected at least ${minTests} tests, but found 0 in result files. Test runner may have crashed.`;
+        console.log(`❌ ${message}`);
+        core.setFailed(message);
+      }
       return;
     }
+    
+    // Check min-tests requirement
+    if (allTests.length < minTests) {
+      console.log(`⚠️  Found ${allTests.length} tests, but expected at least ${minTests}`);
+    }
+    
+    // Count passed/failed/skipped tests
+    // Note: 'error' outcomes (exceptions) should also fail CI, just like 'failed'
+    const passedTests = allTests.filter(t => t.outcome === 'passed');
+    const failedTests = allTests.filter(t => t.outcome === 'failed' || t.outcome === 'error');
+    const skippedTests = allTests.filter(t => t.outcome === 'skipped');
+    
+    console.log('');
+    console.log('📊 Test Results Summary:');
+    console.log(`   ✅ Passed: ${passedTests.length}`);
+    console.log(`   ❌ Failed: ${failedTests.length}`);
+    if (skippedTests.length > 0) {
+      console.log(`   ⏭️  Skipped: ${skippedTests.length}`);
+    }
+    
+    if (failedTests.length > 0) {
+      const failedNames = failedTests.map(t => t.name).join(', ');
+      console.log(`   Failed tests: ${failedNames}`);
+    }
+    console.log('');
     
     console.log('📤 Sending results to Flaky Autopilot API...');
 
@@ -209,9 +264,24 @@ async function run() {
         console.warn('ℹ️  Visit your dashboard to manage your plan');
 
         core.setOutput('flakes_detected', 0);
-        core.setOutput('tests_analyzed', 0);
+        core.setOutput('tests_analyzed', allTests.length);
+        core.setOutput('tests_passed', passedTests.length);
+        core.setOutput('tests_failed', failedTests.length);
+        core.setOutput('tests_skipped', skippedTests.length);
         core.setOutput('dashboard_url', '');
         core.setOutput('status', 'rate_limited');
+
+        // Still fail CI if tests failed (API issues shouldn't hide test failures)
+        if (failOnTestFailure && failedTests.length > 0) {
+          const message = `${failedTests.length} test(s) failed or errored. See logs above for details.`;
+          console.log('');
+          console.log(`❌ ${message}`);
+          core.setFailed(message);
+        } else if (minTests > 0 && allTests.length < minTests) {
+          const message = `Expected at least ${minTests} tests, but found ${allTests.length}. Test runner may have crashed.`;
+          console.log(`❌ ${message}`);
+          core.setFailed(message);
+        }
 
         return;
       }
@@ -234,15 +304,33 @@ async function run() {
       console.warn('ℹ️  Your CI pipeline will continue normally');
 
       core.setOutput('flakes_detected', 0);
-      core.setOutput('tests_analyzed', 0);
+      core.setOutput('tests_analyzed', allTests.length);
+      core.setOutput('tests_passed', passedTests.length);
+      core.setOutput('tests_failed', failedTests.length);
+      core.setOutput('tests_skipped', skippedTests.length);
       core.setOutput('dashboard_url', '');
       core.setOutput('status', 'api_error');
+
+      // Still fail CI if tests failed (API issues shouldn't hide test failures)
+      if (failOnTestFailure && failedTests.length > 0) {
+        const message = `${failedTests.length} test(s) failed or errored. See logs above for details.`;
+        console.log('');
+        console.log(`❌ ${message}`);
+        core.setFailed(message);
+      } else if (minTests > 0 && allTests.length < minTests) {
+        const message = `Expected at least ${minTests} tests, but found ${allTests.length}. Test runner may have crashed.`;
+        console.log(`❌ ${message}`);
+        core.setFailed(message);
+      }
 
       return;
     }
 
     core.setOutput('flakes_detected', response.flakes_detected || 0);
     core.setOutput('tests_analyzed', allTests.length);
+    core.setOutput('tests_passed', passedTests.length);
+    core.setOutput('tests_failed', failedTests.length);
+    core.setOutput('tests_skipped', skippedTests.length);
     core.setOutput('dashboard_url', response.dashboard_url || '');
     core.setOutput('status', 'success');
 
@@ -266,6 +354,18 @@ async function run() {
     }
     
     console.log('🎉 Flaky Test Autopilot - Complete!');
+    
+    // Fail CI if tests failed and option is enabled
+    if (failOnTestFailure && failedTests.length > 0) {
+      const message = `${failedTests.length} test(s) failed or errored. See logs above for details.`;
+      console.log('');
+      console.log(`❌ ${message}`);
+      core.setFailed(message);
+    } else if (minTests > 0 && allTests.length < minTests) {
+      const message = `Expected at least ${minTests} tests, but found ${allTests.length}. Test runner may have crashed.`;
+      console.log(`❌ ${message}`);
+      core.setFailed(message);
+    }
     
   } catch (error: any) {
     console.error('❌ Action failed:', error.message);
