@@ -30,6 +30,7 @@ async function run() {
   let apiUrl = 'https://api.unfoldci.com';
   let apiKey: string | undefined;
   let resultsPath = '**/test-results/**/*.xml';
+  let errorAlreadyReported = false; // Track if we've already reported a specific error
   
   try {
     console.log('🚀 Flaky Test Autopilot - Starting');
@@ -46,12 +47,45 @@ async function run() {
     const token = process.env.GITHUB_TOKEN;
     
     if (!token) {
+      // ✅ Show helpful error message in CI logs FIRST
+      console.error('');
+      console.error('╔══════════════════════════════════════════════════════════════════╗');
+      console.error('║  ❌ ERROR: GITHUB_TOKEN is required but not found               ║');
+      console.error('╠══════════════════════════════════════════════════════════════════╣');
+      console.error('║                                                                  ║');
+      console.error('║  Add this to your workflow step:                                 ║');
+      console.error('║                                                                  ║');
+      console.error('║    - uses: UnfoldAI-Labs/UnfoldCI-flaky-autopilot-action@v1     ║');
+      console.error('║      env:                                                        ║');
+      console.error('║        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}                ║');
+      console.error('║      with:                                                       ║');
+      console.error('║        api-key: ${{ secrets.FLAKY_AUTOPILOT_KEY }}              ║');
+      console.error('║                                                                  ║');
+      console.error('║  The GITHUB_TOKEN is provided automatically by GitHub Actions.  ║');
+      console.error('║  You just need to pass it to the action via the env block.      ║');
+      console.error('║                                                                  ║');
+      console.error('║  📚 Docs: https://docs.unfoldci.com/docs/configuration          ║');
+      console.error('╚══════════════════════════════════════════════════════════════════╝');
+      console.error('');
+      
+      // Report error to telemetry (don't need to pass repo_owner - error-reporter handles it)
+      errorAlreadyReported = true;
       await reportError(apiUrl, apiKey, {
         error_type: ErrorTypes.MISSING_TOKEN,
-        error_message: 'GITHUB_TOKEN environment variable not found',
+        error_message: 'GITHUB_TOKEN environment variable not found. User needs to add env block to workflow.',
         results_path: resultsPath,
       });
-      throw new Error('GITHUB_TOKEN not found');
+      
+      // Set outputs so downstream steps can check
+      core.setOutput('status', 'missing_token');
+      core.setOutput('flakes_detected', 0);
+      core.setOutput('tests_analyzed', 0);
+      core.setOutput('tests_passed', 0);
+      core.setOutput('tests_failed', 0);
+      core.setOutput('tests_skipped', 0);
+      core.setOutput('dashboard_url', '');
+      
+      throw new Error('GITHUB_TOKEN not found. See error message above for fix.');
     }
     
     const octokit = github.getOctokit(token);
@@ -371,13 +405,16 @@ async function run() {
     console.error('❌ Action failed:', error.message);
     console.error(error.stack);
     
-    // Report unexpected errors
-    await reportError(apiUrl, apiKey, {
-      error_type: ErrorTypes.UNKNOWN_ERROR,
-      error_message: error.message,
-      error_stack: error.stack,
-      results_path: resultsPath,
-    });
+    // Only report as UNKNOWN_ERROR if we haven't already reported it with a specific type
+    // This prevents duplicate error reports (e.g., MISSING_TOKEN + UNKNOWN_ERROR)
+    if (!errorAlreadyReported) {
+      await reportError(apiUrl, apiKey, {
+        error_type: ErrorTypes.UNKNOWN_ERROR,
+        error_message: error.message,
+        error_stack: error.stack,
+        results_path: resultsPath,
+      });
+    }
     
     core.setFailed(error.message);
   }
