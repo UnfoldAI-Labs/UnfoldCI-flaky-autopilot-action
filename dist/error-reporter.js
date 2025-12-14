@@ -41,18 +41,78 @@ exports.reportError = reportError;
 const github = __importStar(require("@actions/github"));
 const axios_1 = __importDefault(require("axios"));
 /**
+ * Safely get repo context - works even if GITHUB_TOKEN is missing
+ * Uses GITHUB_REPOSITORY env var as fallback
+ */
+function getRepoContext() {
+    try {
+        // Try getting from @actions/github context first
+        const context = github.context;
+        if (context.repo?.owner && context.repo?.repo) {
+            return { owner: context.repo.owner, repo: context.repo.repo };
+        }
+    }
+    catch (e) {
+        // context.repo getter might throw if env vars are missing
+    }
+    // Fallback: parse GITHUB_REPOSITORY directly
+    // Format: "owner/repo" - always available in GitHub Actions
+    const githubRepo = process.env.GITHUB_REPOSITORY;
+    if (githubRepo) {
+        const [owner, repo] = githubRepo.split('/');
+        if (owner && repo) {
+            return { owner, repo };
+        }
+    }
+    // Last resort fallback
+    return { owner: 'unknown', repo: 'unknown' };
+}
+/**
+ * Safely get workflow context
+ */
+function getWorkflowContext() {
+    try {
+        const context = github.context;
+        return {
+            workflow: context.workflow,
+            job: context.job,
+            runId: context.runId?.toString(),
+            eventName: context.eventName,
+            ref: context.ref,
+            sha: context.sha,
+            actor: context.actor,
+            installationId: context.payload?.installation?.id,
+        };
+    }
+    catch (e) {
+        // Fallback to env vars
+        return {
+            workflow: process.env.GITHUB_WORKFLOW,
+            job: process.env.GITHUB_JOB,
+            runId: process.env.GITHUB_RUN_ID,
+            eventName: process.env.GITHUB_EVENT_NAME,
+            ref: process.env.GITHUB_REF,
+            sha: process.env.GITHUB_SHA,
+            actor: process.env.GITHUB_ACTOR,
+            installationId: undefined,
+        };
+    }
+}
+/**
  * Reports errors to the UnfoldCI API for telemetry and debugging.
  * This helps the UnfoldCI team understand what issues users face.
  *
  * Note: This is non-blocking and will not fail the action if reporting fails.
  */
 async function reportError(apiUrl, apiKey, error) {
-    const context = github.context;
     try {
+        // ✅ Use defensive getters that won't throw
+        const repoContext = getRepoContext();
+        const workflowContext = getWorkflowContext();
         const payload = {
-            installation_id: context.payload.installation?.id,
-            repo_name: context.repo.repo,
-            repo_owner: context.repo.owner,
+            installation_id: workflowContext.installationId,
+            repo_name: repoContext.repo,
+            repo_owner: repoContext.owner,
             // Error details
             error_type: error.error_type,
             error_message: error.error_message,
@@ -61,9 +121,9 @@ async function reportError(apiUrl, apiKey, error) {
             action_version: process.env.npm_package_version || '1.0.0',
             node_version: process.version,
             runner_os: process.env.RUNNER_OS || process.platform,
-            workflow_name: context.workflow,
-            job_name: context.job,
-            run_id: context.runId?.toString(),
+            workflow_name: workflowContext.workflow,
+            job_name: workflowContext.job,
+            run_id: workflowContext.runId,
             run_attempt: parseInt(process.env.GITHUB_RUN_ATTEMPT || '1'),
             // Test framework info
             results_path: error.results_path,
@@ -72,10 +132,10 @@ async function reportError(apiUrl, apiKey, error) {
             // Additional metadata
             metadata: {
                 ...error.metadata,
-                event_name: context.eventName,
-                ref: context.ref,
-                sha: context.sha,
-                actor: context.actor,
+                event_name: workflowContext.eventName,
+                ref: workflowContext.ref,
+                sha: workflowContext.sha,
+                actor: workflowContext.actor,
             },
         };
         // Send to error reporting endpoint
