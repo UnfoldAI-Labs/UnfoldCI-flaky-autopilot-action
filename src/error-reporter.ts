@@ -16,27 +16,39 @@ interface ErrorReport {
  * Uses GITHUB_REPOSITORY env var as fallback
  */
 function getRepoContext(): { owner: string; repo: string } {
+  // ✅ DEBUG: Log what we're seeing
+  console.log('🔍 Debug: Getting repo context...');
+  console.log(`   GITHUB_REPOSITORY env: "${process.env.GITHUB_REPOSITORY || '(not set)'}"`);
+  
   try {
     // Try getting from @actions/github context first
     const context = github.context;
+    console.log(`   github.context.repo: ${JSON.stringify(context.repo || '(undefined)')}`);
+    
     if (context.repo?.owner && context.repo?.repo) {
+      console.log(`   ✅ Using github.context: ${context.repo.owner}/${context.repo.repo}`);
       return { owner: context.repo.owner, repo: context.repo.repo };
     }
-  } catch (e) {
+  } catch (e: any) {
     // context.repo getter might throw if env vars are missing
+    console.log(`   ⚠️ github.context.repo threw: ${e.message}`);
   }
   
   // Fallback: parse GITHUB_REPOSITORY directly
   // Format: "owner/repo" - always available in GitHub Actions
   const githubRepo = process.env.GITHUB_REPOSITORY;
   if (githubRepo) {
-    const [owner, repo] = githubRepo.split('/');
-    if (owner && repo) {
-      return { owner, repo };
+    const parts = githubRepo.split('/');
+    console.log(`   Parsed GITHUB_REPOSITORY: ${JSON.stringify(parts)}`);
+    
+    if (parts.length >= 2 && parts[0] && parts[1]) {
+      console.log(`   ✅ Using GITHUB_REPOSITORY fallback: ${parts[0]}/${parts[1]}`);
+      return { owner: parts[0], repo: parts[1] };
     }
   }
   
   // Last resort fallback
+  console.log('   ❌ Could not determine repo - returning unknown/unknown');
   return { owner: 'unknown', repo: 'unknown' };
 }
 
