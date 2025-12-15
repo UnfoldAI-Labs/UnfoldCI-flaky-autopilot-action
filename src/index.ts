@@ -25,6 +25,55 @@ interface APIResponse {
   upgrade_message?: string;
 }
 
+// Default patterns that cover most test frameworks
+const DEFAULT_JUNIT_PATTERNS = [
+  // Common conventions
+  '**/test-results/**/*.xml',
+  '**/test-reports/**/*.xml',
+  
+  // Standard JUnit output names
+  '**/junit.xml',
+  '**/junit-*.xml',
+  '**/*-junit.xml',
+  '**/junit-report.xml',
+  
+  // pytest
+  '**/test-*.xml',
+  '**/*_test.xml',
+  '**/pytest-results.xml',
+  
+  // Jest
+  '**/junitresults*.xml',
+  '**/jest-junit.xml',
+  
+  // Maven Surefire
+  '**/surefire-reports/*.xml',
+  '**/surefire-reports/TEST-*.xml',
+  
+  // Gradle
+  '**/build/test-results/**/*.xml',
+  
+  // Go
+  '**/report.xml',
+  
+  // .NET / xUnit / NUnit
+  '**/TestResults/*.xml',
+  '**/*TestResults.xml',
+  '**/xunit.xml',
+  '**/nunit-results.xml',
+  
+  // Mocha
+  '**/mocha-*.xml',
+  '**/mocha-results.xml',
+  
+  // PHPUnit
+  '**/phpunit-results.xml',
+  
+  // Generic
+  '**/results.xml',
+  '**/test-output/**/*.xml',
+];
+
 async function run() {
   // Store these for error reporting
   let apiUrl = 'https://api.unfoldci.com';
@@ -38,57 +87,66 @@ async function run() {
     // Get inputs
     apiUrl = core.getInput('api-url') || 'https://api.unfoldci.com';
     apiKey = core.getInput('api-key');
-    resultsPath = core.getInput('results-path') || '**/test-results/**/*.xml';
+    const customPath = core.getInput('results-path');
+    resultsPath = customPath || DEFAULT_JUNIT_PATTERNS.join(',');
     const commentEnabled = core.getInput('comment-on-pr') === 'true';
     const failOnTestFailure = core.getInput('fail-on-test-failure') !== 'false'; // Default: true
     const minTests = parseInt(core.getInput('min-tests') || '0', 10);
     
     const context = github.context;
     const token = process.env.GITHUB_TOKEN;
+    const hasGithubToken = !!token;
     
-    if (!token) {
-      // ✅ Show helpful error message in CI logs FIRST
-      console.error('');
-      console.error('╔══════════════════════════════════════════════════════════════════╗');
-      console.error('║  ❌ ERROR: GITHUB_TOKEN is required but not found               ║');
-      console.error('╠══════════════════════════════════════════════════════════════════╣');
-      console.error('║                                                                  ║');
-      console.error('║  Add this to your workflow step:                                 ║');
-      console.error('║                                                                  ║');
-      console.error('║    - uses: UnfoldAI-Labs/UnfoldCI-flaky-autopilot-action@v1     ║');
-      console.error('║      env:                                                        ║');
-      console.error('║        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}                ║');
-      console.error('║      with:                                                       ║');
-      console.error('║        api-key: ${{ secrets.FLAKY_AUTOPILOT_KEY }}              ║');
-      console.error('║                                                                  ║');
-      console.error('║  The GITHUB_TOKEN is provided automatically by GitHub Actions.  ║');
-      console.error('║  You just need to pass it to the action via the env block.      ║');
-      console.error('║                                                                  ║');
-      console.error('║  📚 Docs: https://docs.unfoldci.com/docs/configuration          ║');
-      console.error('╚══════════════════════════════════════════════════════════════════╝');
-      console.error('');
+    if (!hasGithubToken) {
+      // Show warning but continue execution
+      console.log('');
+      console.log('╔══════════════════════════════════════════════════════════════════╗');
+      console.log('║  ⚠️  WARNING: GITHUB_TOKEN not provided                          ║');
+      console.log('╠══════════════════════════════════════════════════════════════════╣');
+      console.log('║                                                                  ║');
+      console.log('║  UnfoldCI will still collect test data and detect flaky tests.  ║');
+      console.log('║                                                                  ║');
+      console.log('║  However, these features require GITHUB_TOKEN:                   ║');
+      console.log('║    • PR comments when flaky tests are detected                   ║');
+      console.log('║    • Automatic fix PRs from AI analysis                          ║');
+      console.log('║                                                                  ║');
+      console.log('║  To enable all features, add to your workflow:                   ║');
+      console.log('║                                                                  ║');
+      console.log('║    env:                                                          ║');
+      console.log('║      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}                  ║');
+      console.log('║                                                                  ║');
+      console.log('║  📚 Docs: https://docs.unfoldci.com/docs/configuration          ║');
+      console.log('╚══════════════════════════════════════════════════════════════════╝');
+      console.log('');
       
-      // Report error to telemetry (don't need to pass repo_owner - error-reporter handles it)
-      errorAlreadyReported = true;
+      // Report as informational telemetry (not error)
       await reportError(apiUrl, apiKey, {
         error_type: ErrorTypes.MISSING_TOKEN,
-        error_message: 'GITHUB_TOKEN environment variable not found. User needs to add env block to workflow.',
+        error_message: 'GITHUB_TOKEN not provided. PR comments and auto-fix PRs disabled.',
         results_path: resultsPath,
       });
-      
-      // Set outputs so downstream steps can check
-      core.setOutput('status', 'missing_token');
-      core.setOutput('flakes_detected', 0);
-      core.setOutput('tests_analyzed', 0);
-      core.setOutput('tests_passed', 0);
-      core.setOutput('tests_failed', 0);
-      core.setOutput('tests_skipped', 0);
-      core.setOutput('dashboard_url', '');
-      
-      throw new Error('GITHUB_TOKEN not found. See error message above for fix.');
     }
     
-    const octokit = github.getOctokit(token);
+    // Only create octokit if we have a token
+    let octokit: ReturnType<typeof github.getOctokit> | null = null;
+    if (hasGithubToken && token) {
+      octokit = github.getOctokit(token);
+    }
+    
+    // Get repo info - works with or without token
+    let repoOwner: string;
+    let repoName: string;
+    
+    try {
+      repoOwner = context.repo.owner;
+      repoName = context.repo.repo;
+    } catch (e) {
+      // Fallback to GITHUB_REPOSITORY env var
+      const githubRepo = process.env.GITHUB_REPOSITORY || '';
+      const [owner, repo] = githubRepo.split('/');
+      repoOwner = owner || 'unknown';
+      repoName = repo || 'unknown';
+    }
     
     // Extract branch name - GITHUB_HEAD_REF is most reliable for PRs
     // For push events, extract from refs/heads/branch-name
@@ -98,8 +156,8 @@ async function run() {
       || context.payload?.pull_request?.head?.ref 
       || '';
     
-    console.log(`📊 Repo: ${context.repo.owner}/${context.repo.repo}`);
-    console.log(`📝 Commit: ${context.sha}`);
+    console.log(`📊 Repo: ${repoOwner}/${repoName}`);
+    console.log(`📝 Commit: ${context.sha || process.env.GITHUB_SHA || 'unknown'}`);
     console.log(`📌 Branch: ${branch || 'unknown'}`);
     
     // ✅ Early exit for fix branches - no need to send data to API
@@ -114,18 +172,49 @@ async function run() {
       core.setOutput('tests_failed', 0);
       core.setOutput('tests_skipped', 0);
       core.setOutput('dashboard_url', '');
+      core.setOutput('github_token_provided', hasGithubToken);
       return;
     }
     
     // Find test result files
-    console.log(`🔍 Finding test results: ${resultsPath}`);
-    const resultFiles = await glob(resultsPath, { 
-      ignore: ['**/node_modules/**'],
-      absolute: true,
-    });
+    // Split patterns and glob each one, then dedupe
+    const patterns = resultsPath.split(',').map(p => p.trim()).filter(Boolean);
+    
+    if (!customPath) {
+      console.log(`🔍 Auto-detecting test results (checking ${patterns.length} common patterns)`);
+    } else {
+      console.log(`🔍 Finding test results: ${resultsPath}`);
+    }
+    
+    const allFiles: string[] = [];
+    
+    for (const pattern of patterns) {
+      const files = await glob(pattern, { 
+        ignore: ['**/node_modules/**', '**/.git/**'],
+        absolute: true,
+      });
+      allFiles.push(...files);
+    }
+    
+    // Dedupe files (same file might match multiple patterns)
+    const resultFiles = [...new Set(allFiles)];
     
     if (resultFiles.length === 0) {
       console.log('⚠️  No test result files found');
+      console.log('');
+      console.log('   UnfoldCI looks for JUnit XML files in common locations.');
+      console.log('   Make sure your test framework outputs JUnit XML format.');
+      console.log('');
+      console.log('   Common configurations:');
+      console.log('   • Jest: npm install jest-junit, add --reporters=jest-junit');
+      console.log('   • pytest: pytest --junitxml=test-results/junit.xml');
+      console.log('   • Vitest: add junit reporter in vitest.config.ts');
+      console.log('   • Go: go test -v 2>&1 | go-junit-report > report.xml');
+      console.log('');
+      console.log('   Or specify a custom path:');
+      console.log('     results-path: "your/custom/path/**/*.xml"');
+      console.log('');
+      
       await reportError(apiUrl, apiKey, {
         error_type: ErrorTypes.XML_NOT_FOUND,
         error_message: `No test result files found matching pattern: ${resultsPath}`,
@@ -133,6 +222,7 @@ async function run() {
         files_found: 0,
         metadata: {
           search_pattern: resultsPath,
+          patterns_checked: patterns.length,
           cwd: process.cwd(),
         },
       });
@@ -143,6 +233,7 @@ async function run() {
       core.setOutput('tests_failed', 0);
       core.setOutput('tests_skipped', 0);
       core.setOutput('dashboard_url', '');
+      core.setOutput('github_token_provided', hasGithubToken);
       
       // Check min-tests requirement
       if (minTests > 0) {
@@ -202,6 +293,7 @@ async function run() {
       core.setOutput('tests_failed', 0);
       core.setOutput('tests_skipped', 0);
       core.setOutput('dashboard_url', '');
+      core.setOutput('github_token_provided', hasGithubToken);
       
       // Check min-tests requirement
       if (minTests > 0) {
@@ -245,11 +337,12 @@ async function run() {
       response = await sendTestResults({
         apiUrl,
         apiKey,
-        repoUrl: `https://github.com/${context.repo.owner}/${context.repo.repo}`,
-        commitSha: context.sha,
+        repoUrl: `https://github.com/${repoOwner}/${repoName}`,
+        commitSha: context.sha || process.env.GITHUB_SHA || 'unknown',
         testResults: allTests,
-        triggeredBy: context.actor, // GitHub username who triggered the workflow
-        branch: branch, // Used to filter out fix PR branches
+        triggeredBy: context.actor || process.env.GITHUB_ACTOR,
+        branch: branch,
+        hasGithubToken: hasGithubToken,
       }) as APIResponse;
 
       console.log(`✅ API Response:`, response);
@@ -304,6 +397,7 @@ async function run() {
         core.setOutput('tests_skipped', skippedTests.length);
         core.setOutput('dashboard_url', '');
         core.setOutput('status', 'rate_limited');
+        core.setOutput('github_token_provided', hasGithubToken);
 
         // Still fail CI if tests failed (API issues shouldn't hide test failures)
         if (failOnTestFailure && failedTests.length > 0) {
@@ -344,6 +438,7 @@ async function run() {
       core.setOutput('tests_skipped', skippedTests.length);
       core.setOutput('dashboard_url', '');
       core.setOutput('status', 'api_error');
+      core.setOutput('github_token_provided', hasGithubToken);
 
       // Still fail CI if tests failed (API issues shouldn't hide test failures)
       if (failOnTestFailure && failedTests.length > 0) {
@@ -367,15 +462,16 @@ async function run() {
     core.setOutput('tests_skipped', skippedTests.length);
     core.setOutput('dashboard_url', response.dashboard_url || '');
     core.setOutput('status', 'success');
+    core.setOutput('github_token_provided', hasGithubToken);
 
-    if (commentEnabled && context.payload.pull_request && (response.flakes_detected ?? 0) > 0) {
+    if (commentEnabled && hasGithubToken && octokit && context.payload.pull_request && (response.flakes_detected ?? 0) > 0) {
       console.log('💬 Creating PR comment...');
 
       try {
         await commentOnPR({
           octokit,
-          owner: context.repo.owner,
-          repo: context.repo.repo,
+          owner: repoOwner,
+          repo: repoName,
           prNumber: context.payload.pull_request.number,
           flakesDetected: response.flakes_detected ?? 0,
           apiUrl: response.dashboard_url || apiUrl,
@@ -385,6 +481,8 @@ async function run() {
       } catch (error: any) {
         console.warn('⚠️  Failed to create PR comment:', error.message);
       }
+    } else if (commentEnabled && !hasGithubToken && context.payload.pull_request && (response.flakes_detected ?? 0) > 0) {
+      console.log('ℹ️  PR comment skipped (GITHUB_TOKEN not provided)');
     }
     
     console.log('🎉 Flaky Test Autopilot - Complete!');

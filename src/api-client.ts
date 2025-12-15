@@ -8,6 +8,7 @@ interface SendResultsOptions {
   testResults: TestResult[];
   triggeredBy?: string; // GitHub username who triggered the CI
   branch?: string; // Branch name (used to filter out fix PR branches)
+  hasGithubToken?: boolean; // Whether GITHUB_TOKEN was provided
 }
 
 interface APIResponse {
@@ -24,7 +25,7 @@ interface APIResponse {
 }
 
 export async function sendTestResults(options: SendResultsOptions): Promise<APIResponse> {
-  const { apiUrl, apiKey, repoUrl, commitSha, testResults, triggeredBy, branch } = options;
+  const { apiUrl, apiKey, repoUrl, commitSha, testResults, triggeredBy, branch, hasGithubToken } = options;
 
   console.log(`📤 Sending ${testResults.length} test results to API...`);
   if (branch) {
@@ -52,8 +53,9 @@ export async function sendTestResults(options: SendResultsOptions): Promise<APIR
       commit_sha: commitSha,
       test_results: testResults,
       source: 'github_action',
-      triggered_by: triggeredBy, // GitHub username who triggered the CI
-      branch: branch, // Branch name (used to filter out fix PR branches)
+      triggered_by: triggeredBy,
+      branch: branch,
+      github_token_provided: hasGithubToken ?? true,
     }),
   });
 

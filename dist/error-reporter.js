@@ -42,38 +42,33 @@ const github = __importStar(require("@actions/github"));
 const axios_1 = __importDefault(require("axios"));
 /**
  * Safely get repo context - works even if GITHUB_TOKEN is missing
- * Uses GITHUB_REPOSITORY env var as fallback
+ * Uses GITHUB_REPOSITORY env var as fallback (most reliable method)
  */
 function getRepoContext() {
-    // ✅ DEBUG: Log what we're seeing
-    console.log('🔍 Debug: Getting repo context...');
-    console.log(`   GITHUB_REPOSITORY env: "${process.env.GITHUB_REPOSITORY || '(not set)'}"`);
+    // Method 1: Try GITHUB_REPOSITORY env var directly first (most reliable)
+    // This is always available in GitHub Actions and doesn't require GITHUB_TOKEN
+    const githubRepo = process.env.GITHUB_REPOSITORY;
+    if (githubRepo && githubRepo.includes('/')) {
+        const slashIndex = githubRepo.indexOf('/');
+        const owner = githubRepo.substring(0, slashIndex);
+        const repo = githubRepo.substring(slashIndex + 1);
+        if (owner && owner.length > 0 && repo && repo.length > 0) {
+            return { owner, repo };
+        }
+    }
+    // Method 2: Try @actions/github context
     try {
-        // Try getting from @actions/github context first
         const context = github.context;
-        console.log(`   github.context.repo: ${JSON.stringify(context.repo || '(undefined)')}`);
-        if (context.repo?.owner && context.repo?.repo) {
-            console.log(`   ✅ Using github.context: ${context.repo.owner}/${context.repo.repo}`);
-            return { owner: context.repo.owner, repo: context.repo.repo };
+        const repoData = context.repo;
+        if (repoData && repoData.owner && repoData.owner.length > 0 &&
+            repoData.repo && repoData.repo.length > 0) {
+            return { owner: repoData.owner, repo: repoData.repo };
         }
     }
     catch (e) {
         // context.repo getter might throw if env vars are missing
-        console.log(`   ⚠️ github.context.repo threw: ${e.message}`);
-    }
-    // Fallback: parse GITHUB_REPOSITORY directly
-    // Format: "owner/repo" - always available in GitHub Actions
-    const githubRepo = process.env.GITHUB_REPOSITORY;
-    if (githubRepo) {
-        const parts = githubRepo.split('/');
-        console.log(`   Parsed GITHUB_REPOSITORY: ${JSON.stringify(parts)}`);
-        if (parts.length >= 2 && parts[0] && parts[1]) {
-            console.log(`   ✅ Using GITHUB_REPOSITORY fallback: ${parts[0]}/${parts[1]}`);
-            return { owner: parts[0], repo: parts[1] };
-        }
     }
     // Last resort fallback
-    console.log('   ❌ Could not determine repo - returning unknown/unknown');
     return { owner: 'unknown', repo: 'unknown' };
 }
 /**
@@ -145,6 +140,9 @@ async function reportError(apiUrl, apiKey, error) {
                 ref: workflowContext.ref,
                 sha: workflowContext.sha,
                 actor: workflowContext.actor,
+                // Debug info
+                debug_github_repository: process.env.GITHUB_REPOSITORY || '(not set)',
+                debug_github_token_present: !!process.env.GITHUB_TOKEN,
             },
         };
         // Send to error reporting endpoint
