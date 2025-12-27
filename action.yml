@@ -13,28 +13,13 @@ inputs:
     default: 'https://2ese0yds4a.execute-api.us-east-1.amazonaws.com'
   
   api-key:
-    description: 'UnfoldCI API key for authentication'
+    description: 'UnfoldCI API key for authentication (get yours at app.unfoldci.com)'
     required: false
   
   results-path:
     description: 'Glob pattern(s) for JUnit XML files. Leave empty to auto-detect from common locations (Jest, pytest, Vitest, Go, Maven, Gradle, Mocha, PHPUnit, xUnit, etc.)'
     required: false
     default: ''
-  
-  enable-historical-backfill:
-    description: 'Fetch past CI runs on first execution (instant analysis!)'
-    required: false
-    default: 'true'
-  
-  max-historical-runs:
-    description: 'Number of past runs to fetch for backfill'
-    required: false
-    default: '50'
-  
-  comment-on-pr:
-    description: 'Comment on PR when flaky tests are detected (requires GITHUB_TOKEN)'
-    required: false
-    default: 'true'
   
   fail-on-test-failure:
     description: 'Fail the CI if any tests failed or errored (reflects actual test status)'
@@ -61,10 +46,7 @@ outputs:
     description: 'URL to UnfoldCI dashboard with detailed analysis and metrics'
   status:
     description: 'Action status: success, rate_limited, or api_error'
-  github_token_provided:
-    description: 'Whether GITHUB_TOKEN was provided (affects PR comments and auto-fix features)'
 
 runs:
   using: 'node20'
   main: 'dist/index.js'
-

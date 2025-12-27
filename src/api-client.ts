@@ -6,9 +6,8 @@ interface SendResultsOptions {
   repoUrl: string;
   commitSha: string;
   testResults: TestResult[];
-  triggeredBy?: string; // GitHub username who triggered the CI
-  branch?: string; // Branch name (used to filter out fix PR branches)
-  hasGithubToken?: boolean; // Whether GITHUB_TOKEN was provided
+  triggeredBy?: string;
+  branch?: string;
 }
 
 interface APIResponse {
@@ -25,14 +24,14 @@ interface APIResponse {
 }
 
 export async function sendTestResults(options: SendResultsOptions): Promise<APIResponse> {
-  const { apiUrl, apiKey, repoUrl, commitSha, testResults, triggeredBy, branch, hasGithubToken } = options;
+  const { apiUrl, apiKey, repoUrl, commitSha, testResults, triggeredBy, branch } = options;
 
   console.log(`📤 Sending ${testResults.length} test results to API...`);
   if (branch) {
     console.log(`📌 Branch: ${branch}`);
   }
 
-  // ✅ DEBUG: Log outcome distribution to help diagnose "all passed" bug
+  // Debug: Log outcome distribution
   const passedCount = testResults.filter(t => t.outcome === 'passed').length;
   const failedCount = testResults.filter(t => t.outcome === 'failed').length;
   console.log(`📊 Test Results Summary:`);
@@ -55,7 +54,6 @@ export async function sendTestResults(options: SendResultsOptions): Promise<APIR
       source: 'github_action',
       triggered_by: triggeredBy,
       branch: branch,
-      github_token_provided: hasGithubToken ?? true,
     }),
   });
 

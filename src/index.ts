@@ -3,12 +3,9 @@ import * as github from '@actions/github';
 import { glob } from 'glob';
 import { parseJUnitXML } from './parsers/junit';
 import { sendTestResults } from './api-client';
-import { calculateFileHash } from './utils/hash';
 import { calculateDependencyHash } from './utils/dependency-hash';
-import { commentOnPR } from './pr-comment';
 import { reportError, ErrorTypes } from './error-reporter';
 
-// Add this interface at the top
 interface APIResponse {
   success: boolean;
   ci_run_id?: string;
@@ -75,65 +72,24 @@ const DEFAULT_JUNIT_PATTERNS = [
 ];
 
 async function run() {
-  // Store these for error reporting
   let apiUrl = 'https://api.unfoldci.com';
   let apiKey: string | undefined;
   let resultsPath = '**/test-results/**/*.xml';
-  let errorAlreadyReported = false; // Track if we've already reported a specific error
   
   try {
-    console.log('🚀 Flaky Test Autopilot - Starting');
+    console.log('🚀 UnfoldCI Flaky Test Detection - Starting');
     
     // Get inputs
     apiUrl = core.getInput('api-url') || 'https://api.unfoldci.com';
     apiKey = core.getInput('api-key');
     const customPath = core.getInput('results-path');
     resultsPath = customPath || DEFAULT_JUNIT_PATTERNS.join(',');
-    const commentEnabled = core.getInput('comment-on-pr') === 'true';
     const failOnTestFailure = core.getInput('fail-on-test-failure') !== 'false'; // Default: true
     const minTests = parseInt(core.getInput('min-tests') || '0', 10);
     
     const context = github.context;
-    const token = process.env.GITHUB_TOKEN;
-    const hasGithubToken = !!token;
     
-    if (!hasGithubToken) {
-      // Show warning but continue execution
-      console.log('');
-      console.log('╔══════════════════════════════════════════════════════════════════╗');
-      console.log('║  ⚠️  WARNING: GITHUB_TOKEN not provided                          ║');
-      console.log('╠══════════════════════════════════════════════════════════════════╣');
-      console.log('║                                                                  ║');
-      console.log('║  UnfoldCI will still collect test data and detect flaky tests.  ║');
-      console.log('║                                                                  ║');
-      console.log('║  However, these features require GITHUB_TOKEN:                   ║');
-      console.log('║    • PR comments when flaky tests are detected                   ║');
-      console.log('║    • Automatic fix PRs from AI analysis                          ║');
-      console.log('║                                                                  ║');
-      console.log('║  To enable all features, add to your workflow:                   ║');
-      console.log('║                                                                  ║');
-      console.log('║    env:                                                          ║');
-      console.log('║      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}                  ║');
-      console.log('║                                                                  ║');
-      console.log('║  📚 Docs: https://docs.unfoldci.com/docs/configuration          ║');
-      console.log('╚══════════════════════════════════════════════════════════════════╝');
-      console.log('');
-      
-      // Report as informational telemetry (not error)
-      await reportError(apiUrl, apiKey, {
-        error_type: ErrorTypes.MISSING_TOKEN,
-        error_message: 'GITHUB_TOKEN not provided. PR comments and auto-fix PRs disabled.',
-        results_path: resultsPath,
-      });
-    }
-    
-    // Only create octokit if we have a token
-    let octokit: ReturnType<typeof github.getOctokit> | null = null;
-    if (hasGithubToken && token) {
-      octokit = github.getOctokit(token);
-    }
-    
-    // Get repo info - works with or without token
+    // Get repo info from environment (no token needed)
     let repoOwner: string;
     let repoName: string;
     
@@ -148,10 +104,8 @@ async function run() {
       repoName = repo || 'unknown';
     }
     
-    // Extract branch name - GITHUB_HEAD_REF is most reliable for PRs
-    // For push events, extract from refs/heads/branch-name
-    // For PR events, context.ref = refs/pull/123/merge which is NOT the branch name
-    const branch = process.env.GITHUB_HEAD_REF  // PR source branch (set by GitHub Actions)
+    // Extract branch name
+    const branch = process.env.GITHUB_HEAD_REF
       || (context.ref?.startsWith('refs/heads/') ? context.ref.replace('refs/heads/', '') : '')
       || context.payload?.pull_request?.head?.ref 
       || '';
@@ -160,8 +114,7 @@ async function run() {
     console.log(`📝 Commit: ${context.sha || process.env.GITHUB_SHA || 'unknown'}`);
     console.log(`📌 Branch: ${branch || 'unknown'}`);
     
-    // ✅ Early exit for fix branches - no need to send data to API
-    // This saves API calls and prevents any possibility of polluting test stats
+    // Early exit for fix branches
     if (branch.startsWith('flaky-autopilot/fix-')) {
       console.log(`⏭️  Skipping - this is a fix branch: ${branch}`);
       console.log(`   Fix PR branches should not affect original test statistics`);
@@ -172,12 +125,10 @@ async function run() {
       core.setOutput('tests_failed', 0);
       core.setOutput('tests_skipped', 0);
       core.setOutput('dashboard_url', '');
-      core.setOutput('github_token_provided', hasGithubToken);
       return;
     }
     
     // Find test result files
-    // Split patterns and glob each one, then dedupe
     const patterns = resultsPath.split(',').map(p => p.trim()).filter(Boolean);
     
     if (!customPath) {
@@ -196,7 +147,7 @@ async function run() {
       allFiles.push(...files);
     }
     
-    // Dedupe files (same file might match multiple patterns)
+    // Dedupe files
     const resultFiles = [...new Set(allFiles)];
     
     if (resultFiles.length === 0) {
@@ -233,9 +184,7 @@ async function run() {
       core.setOutput('tests_failed', 0);
       core.setOutput('tests_skipped', 0);
       core.setOutput('dashboard_url', '');
-      core.setOutput('github_token_provided', hasGithubToken);
       
-      // Check min-tests requirement
       if (minTests > 0) {
         const message = `Expected at least ${minTests} tests, but found 0 (no test result files). Test runner may have crashed.`;
         console.log(`❌ ${message}`);
@@ -248,14 +197,14 @@ async function run() {
     
     // Parse all test results
     const allTests: any[] = [];
-    
     let parseErrors: string[] = [];
+    
     for (const file of resultFiles) {
       try {
         console.log(`  Parsing: ${file}`);
         const tests = await parseJUnitXML(file);
 
-        // Calculate dependency hash for each test (test + imports)
+        // Calculate dependency hash for each test
         for (const test of tests) {
           console.log(`\n  🔍 Calculating dependency hash for: ${test.name}`);
           test.code_hash = await calculateDependencyHash(test.file);
@@ -293,9 +242,7 @@ async function run() {
       core.setOutput('tests_failed', 0);
       core.setOutput('tests_skipped', 0);
       core.setOutput('dashboard_url', '');
-      core.setOutput('github_token_provided', hasGithubToken);
       
-      // Check min-tests requirement
       if (minTests > 0) {
         const message = `Expected at least ${minTests} tests, but found 0 in result files. Test runner may have crashed.`;
         console.log(`❌ ${message}`);
@@ -304,13 +251,11 @@ async function run() {
       return;
     }
     
-    // Check min-tests requirement
     if (allTests.length < minTests) {
       console.log(`⚠️  Found ${allTests.length} tests, but expected at least ${minTests}`);
     }
     
     // Count passed/failed/skipped tests
-    // Note: 'error' outcomes (exceptions) should also fail CI, just like 'failed'
     const passedTests = allTests.filter(t => t.outcome === 'passed');
     const failedTests = allTests.filter(t => t.outcome === 'failed' || t.outcome === 'error');
     const skippedTests = allTests.filter(t => t.outcome === 'skipped');
@@ -329,7 +274,7 @@ async function run() {
     }
     console.log('');
     
-    console.log('📤 Sending results to Flaky Autopilot API...');
+    console.log('📤 Sending results to UnfoldCI API...');
 
     let response: APIResponse | null = null;
 
@@ -342,13 +287,11 @@ async function run() {
         testResults: allTests,
         triggeredBy: context.actor || process.env.GITHUB_ACTOR,
         branch: branch,
-        hasGithubToken: hasGithubToken,
       }) as APIResponse;
 
-      console.log(`✅ API Response:`, response);
+      console.log(`✅ Results sent successfully`);
       console.log(`   Flaky tests detected: ${response.flakes_detected || 0}`);
 
-      // Show usage warning if limits exceeded (data was still saved)
       if (response.usage_limit_exceeded) {
         console.log('');
         console.log('📊 Usage Limit Notice:');
@@ -376,7 +319,6 @@ async function run() {
           // Ignore parsing errors
         }
 
-        // Report rate limit (useful for understanding usage patterns)
         await reportError(apiUrl, apiKey, {
           error_type: ErrorTypes.API_RATE_LIMIT,
           error_message: 'Usage limit exceeded',
@@ -397,9 +339,7 @@ async function run() {
         core.setOutput('tests_skipped', skippedTests.length);
         core.setOutput('dashboard_url', '');
         core.setOutput('status', 'rate_limited');
-        core.setOutput('github_token_provided', hasGithubToken);
 
-        // Still fail CI if tests failed (API issues shouldn't hide test failures)
         if (failOnTestFailure && failedTests.length > 0) {
           const message = `${failedTests.length} test(s) failed or errored. See logs above for details.`;
           console.log('');
@@ -414,7 +354,6 @@ async function run() {
         return;
       }
 
-      // Report API errors
       await reportError(apiUrl, apiKey, {
         error_type: ErrorTypes.API_ERROR,
         error_message: error.message,
@@ -438,9 +377,7 @@ async function run() {
       core.setOutput('tests_skipped', skippedTests.length);
       core.setOutput('dashboard_url', '');
       core.setOutput('status', 'api_error');
-      core.setOutput('github_token_provided', hasGithubToken);
 
-      // Still fail CI if tests failed (API issues shouldn't hide test failures)
       if (failOnTestFailure && failedTests.length > 0) {
         const message = `${failedTests.length} test(s) failed or errored. See logs above for details.`;
         console.log('');
@@ -462,30 +399,11 @@ async function run() {
     core.setOutput('tests_skipped', skippedTests.length);
     core.setOutput('dashboard_url', response.dashboard_url || '');
     core.setOutput('status', 'success');
-    core.setOutput('github_token_provided', hasGithubToken);
-
-    if (commentEnabled && hasGithubToken && octokit && context.payload.pull_request && (response.flakes_detected ?? 0) > 0) {
-      console.log('💬 Creating PR comment...');
-
-      try {
-        await commentOnPR({
-          octokit,
-          owner: repoOwner,
-          repo: repoName,
-          prNumber: context.payload.pull_request.number,
-          flakesDetected: response.flakes_detected ?? 0,
-          apiUrl: response.dashboard_url || apiUrl,
-        });
-
-        console.log('✅ PR comment created');
-      } catch (error: any) {
-        console.warn('⚠️  Failed to create PR comment:', error.message);
-      }
-    } else if (commentEnabled && !hasGithubToken && context.payload.pull_request && (response.flakes_detected ?? 0) > 0) {
-      console.log('ℹ️  PR comment skipped (GITHUB_TOKEN not provided)');
-    }
     
-    console.log('🎉 Flaky Test Autopilot - Complete!');
+    console.log('🎉 UnfoldCI Flaky Test Detection - Complete!');
+    if (response.dashboard_url) {
+      console.log(`📊 View results: ${response.dashboard_url}`);
+    }
     
     // Fail CI if tests failed and option is enabled
     if (failOnTestFailure && failedTests.length > 0) {
@@ -503,16 +421,12 @@ async function run() {
     console.error('❌ Action failed:', error.message);
     console.error(error.stack);
     
-    // Only report as UNKNOWN_ERROR if we haven't already reported it with a specific type
-    // This prevents duplicate error reports (e.g., MISSING_TOKEN + UNKNOWN_ERROR)
-    if (!errorAlreadyReported) {
-      await reportError(apiUrl, apiKey, {
-        error_type: ErrorTypes.UNKNOWN_ERROR,
-        error_message: error.message,
-        error_stack: error.stack,
-        results_path: resultsPath,
-      });
-    }
+    await reportError(apiUrl, apiKey, {
+      error_type: ErrorTypes.UNKNOWN_ERROR,
+      error_message: error.message,
+      error_stack: error.stack,
+      results_path: resultsPath,
+    });
     
     core.setFailed(error.message);
   }

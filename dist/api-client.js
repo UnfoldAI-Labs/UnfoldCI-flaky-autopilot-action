@@ -2,12 +2,12 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.sendTestResults = sendTestResults;
 async function sendTestResults(options) {
-    const { apiUrl, apiKey, repoUrl, commitSha, testResults, triggeredBy, branch, hasGithubToken } = options;
+    const { apiUrl, apiKey, repoUrl, commitSha, testResults, triggeredBy, branch } = options;
     console.log(`📤 Sending ${testResults.length} test results to API...`);
     if (branch) {
         console.log(`📌 Branch: ${branch}`);
     }
-    // ✅ DEBUG: Log outcome distribution to help diagnose "all passed" bug
+    // Debug: Log outcome distribution
     const passedCount = testResults.filter(t => t.outcome === 'passed').length;
     const failedCount = testResults.filter(t => t.outcome === 'failed').length;
     console.log(`📊 Test Results Summary:`);
@@ -29,7 +29,6 @@ async function sendTestResults(options) {
             source: 'github_action',
             triggered_by: triggeredBy,
             branch: branch,
-            github_token_provided: hasGithubToken ?? true,
         }),
     });
     if (!response.ok) {
